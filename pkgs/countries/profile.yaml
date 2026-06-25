@@ -1,0 +1,11 @@
+id: countries
+name: Countries
+sources:
+  docs_url: https://countries.trevorblades.com/
+  graphql_url: https://countries.trevorblades.com/graphql
+auth:
+  type: unknown
+policy:
+  default_write: confirm
+output:
+  default_format: json

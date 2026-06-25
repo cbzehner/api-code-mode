@@ -110,7 +110,8 @@ The first `pkgs/` set intentionally mixes API styles:
 - `google-sheets`: Google Workspace service via APIs.guru.
 - `notion`: modern SaaS API via APIs.guru.
 - `twilio`: broad API family via APIs.guru.
-- `linear`: GraphQL API, currently unsupported by the runtime.
+- `linear`: GraphQL API with query introspection support.
+- `countries`: public GraphQL API used to validate GraphQL introspection and read-only calls.
 - `cable`: Fern-hosted docs with `llms.txt`, MCP metadata, and three OpenAPI specs.
 - `weatherbit`, `visualcrossing-weather`, `bulksms`, `sms77`, `interzoid-currency-rate`: smaller provider APIs via APIs.guru.
 

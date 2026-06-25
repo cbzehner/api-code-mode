@@ -31,6 +31,9 @@ npm run plan-auth -- sms77 >/tmp/api-code-mode-sms77-auth-plan.json
 npm run plan-auth -- twilio >/tmp/api-code-mode-twilio-auth-plan.json
 node src/cli.mjs cable ops transaction >/tmp/api-code-mode-cable-scoped-ops.json
 node src/cli.mjs github call github-v3-rest-api:meta/root >/tmp/api-code-mode-github-call-root.json
+node src/cli.mjs countries ops >/tmp/api-code-mode-countries-ops.json
+node src/cli.mjs countries describe query:countries >/tmp/api-code-mode-countries-describe.json
+node src/cli.mjs countries call query:countries --select code --select name >/tmp/api-code-mode-countries-call.json
 if node src/cli.mjs github call github-v3-rest-api:activity/mark-notifications-as-read >/tmp/api-code-mode-github-call-write.json 2>/tmp/api-code-mode-github-call-write.err; then
   echo "expected write call to fail" >&2
   exit 1
@@ -56,6 +59,9 @@ const sms77AuthPlan = JSON.parse(fs.readFileSync("/tmp/api-code-mode-sms77-auth-
 const twilioAuthPlan = JSON.parse(fs.readFileSync("/tmp/api-code-mode-twilio-auth-plan.json", "utf8").split("\n").slice(3).join("\n"));
 const cableScopedOps = JSON.parse(fs.readFileSync("/tmp/api-code-mode-cable-scoped-ops.json", "utf8"));
 const githubCallRoot = JSON.parse(fs.readFileSync("/tmp/api-code-mode-github-call-root.json", "utf8"));
+const countriesOps = JSON.parse(fs.readFileSync("/tmp/api-code-mode-countries-ops.json", "utf8"));
+const countriesDescribe = JSON.parse(fs.readFileSync("/tmp/api-code-mode-countries-describe.json", "utf8"));
+const countriesCall = JSON.parse(fs.readFileSync("/tmp/api-code-mode-countries-call.json", "utf8"));
 const githubCallWriteError = fs.readFileSync("/tmp/api-code-mode-github-call-write.err", "utf8");
 
 if (!help.commands.some((command) => command.command === "generate <domain-or-url>")) {
@@ -75,14 +81,23 @@ if (!cableScopedOps.some((operation) => operation.qualified_id?.includes("transa
 if (!["ok", "http_error"].includes(githubCallRoot.status) || typeof githubCallRoot.response.status !== "number") {
   throw new Error("expected read-only GitHub root call to capture an HTTP response");
 }
+if (!countriesOps.some((operation) => operation.qualified_id === "query:countries")) {
+  throw new Error("expected Countries GraphQL ops to include query:countries");
+}
+if (countriesDescribe.safety !== "read" || !countriesDescribe.return_type) {
+  throw new Error("expected Countries GraphQL describe to expose read safety and return type");
+}
+if (countriesCall.status !== "ok" || !Array.isArray(countriesCall.response.json?.data?.countries)) {
+  throw new Error("expected Countries GraphQL call to return countries data");
+}
 if (!githubCallWriteError.includes("Only read-only GET operations")) {
   throw new Error("expected write call to fail before network request");
 }
-if (validate.filter((result) => result.status === "ok").length !== 14) {
-  throw new Error("expected 14 package profiles to validate");
+if (validate.filter((result) => result.status === "ok").length !== 16) {
+  throw new Error("expected 16 package profiles to validate");
 }
-if (gaps.length !== 1) {
-  throw new Error("expected 1 known gap");
+if (gaps.length !== 0) {
+  throw new Error("expected no known validation gaps");
 }
 if (!githubDiscovery.candidates.some((candidate) => candidate.type === "apis_guru")) {
   throw new Error("expected GitHub discovery to find an APIs.guru candidate");

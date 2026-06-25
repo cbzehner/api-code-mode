@@ -233,6 +233,147 @@ const fetchSpecs = async (profile) => {
 
 const fetchPackageSpecs = async (packageId) => fetchSpecs(await readProfile(packageId));
 
+const graphqlRequest = async (url, body, headers = {}) => {
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "content-type": "application/json", ...headers },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+  });
+  const text = await response.text();
+  let json = null;
+  try {
+    json = JSON.parse(text);
+  } catch {
+    // Keep the original response status below; callers can decide how to handle non-JSON bodies.
+  }
+  return { response, json, text };
+};
+
+const graphqlIntrospectionQuery = `
+query ApiCodeModeIntrospection {
+  __schema {
+    queryType {
+      name
+      fields {
+        name
+        description
+        type { kind name ofType { kind name } }
+      }
+    }
+    mutationType {
+      name
+      fields {
+        name
+        description
+        type { kind name ofType { kind name } }
+      }
+    }
+  }
+}
+`;
+
+const graphqlTypeQuery = `
+query ApiCodeModeType($name: String!) {
+  __type(name: $name) {
+    fields {
+      name
+      type { kind name ofType { kind name ofType { kind name } } }
+    }
+  }
+}
+`;
+
+const graphqlAuthHeaders = (profile) => {
+  if (profile.auth.type !== "bearer" || !profile.auth.env || !process.env[profile.auth.env]) {
+    return {};
+  }
+  return { Authorization: `${profile.auth.scheme ?? "Bearer"} ${process.env[profile.auth.env]}` };
+};
+
+const graphqlSchema = async (profile) => {
+  const { response, json, text } = await graphqlRequest(profile.graphqlUrl, { query: graphqlIntrospectionQuery }, graphqlAuthHeaders(profile));
+  if (!response.ok || json?.errors) {
+    const message = json?.errors?.[0]?.message ?? text.slice(0, 200) ?? response.statusText;
+    throw new Error(`GraphQL introspection failed: HTTP ${response.status} ${message}`);
+  }
+  if (!json?.data?.__schema) {
+    throw new Error("GraphQL introspection did not return a schema.");
+  }
+  return json.data.__schema;
+};
+
+const graphqlTypeRef = (type) => {
+  if (!type) {
+    return { display: "Unknown", named: "Unknown", kind: "UNKNOWN", required: false, list: false };
+  }
+  if (type.kind === "NON_NULL") {
+    const inner = graphqlTypeRef(type.ofType);
+    return { ...inner, display: `${inner.display}!`, required: true };
+  }
+  if (type.kind === "LIST") {
+    const inner = graphqlTypeRef(type.ofType);
+    return { ...inner, display: `[${inner.display}]`, list: true };
+  }
+  return { display: type.name ?? type.kind, named: type.name ?? type.kind, kind: type.kind, required: false, list: false };
+};
+
+const graphqlSchemaType = (schema, name) => (schema.types ?? []).find((type) => type.name === name);
+
+const graphqlTypeFields = async (profile, name) => {
+  const { response, json, text } = await graphqlRequest(profile.graphqlUrl, {
+    query: graphqlTypeQuery,
+    variables: { name },
+  }, graphqlAuthHeaders(profile));
+  if (!response.ok || json?.errors) {
+    const message = json?.errors?.[0]?.message ?? text.slice(0, 200) ?? response.statusText;
+    throw new Error(`GraphQL type introspection failed: HTTP ${response.status} ${message}`);
+  }
+  return json?.data?.__type?.fields ?? [];
+};
+
+const graphqlRootFields = (schema, rootTypeName) => {
+  if (!rootTypeName) {
+    return [];
+  }
+  if (schema.queryType?.name === rootTypeName) {
+    return schema.queryType.fields ?? [];
+  }
+  if (schema.mutationType?.name === rootTypeName) {
+    return schema.mutationType.fields ?? [];
+  }
+  return graphqlSchemaType(schema, rootTypeName)?.fields ?? [];
+};
+
+const graphqlOperationsFromSchema = (schema) => [
+  ...graphqlRootFields(schema, schema.queryType?.name).map((field) => ({
+    id: `query:${field.name}`,
+    qualified_id: `query:${field.name}`,
+    method: "QUERY",
+    path: field.name,
+    summary: field.description,
+    tags: ["graphql", "query"],
+    safety: "read",
+    field,
+  })),
+  ...graphqlRootFields(schema, schema.mutationType?.name).map((field) => ({
+    id: `mutation:${field.name}`,
+    qualified_id: `mutation:${field.name}`,
+    method: "MUTATION",
+    path: field.name,
+    summary: field.description,
+    tags: ["graphql", "mutation"],
+    safety: "write",
+    field,
+  })),
+];
+
+const graphqlPackageOperations = async (packageId) => {
+  const profile = await readProfile(packageId);
+  const schema = await graphqlSchema(profile);
+  return graphqlOperationsFromSchema(schema).map(({ field, ...operation }) => operation);
+};
+
 const packageIds = async () => {
   const entries = await readdir(new URL("../pkgs", import.meta.url), { withFileTypes: true });
   return entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name).sort();
@@ -850,6 +991,54 @@ const describePackageOperation = async (packageId, id) => {
   };
 };
 
+const findGraphqlOperation = (schema, id) => {
+  const operations = graphqlOperationsFromSchema(schema);
+  return operations.find((operation) => operation.qualified_id === id)
+    ?? operations.find((operation) => operation.id === id)
+    ?? operations.find((operation) => operation.path === id);
+};
+
+const describeGraphqlOperation = async (packageId, id) => {
+  const profile = await readProfile(packageId);
+  const schema = await graphqlSchema(profile);
+  const operation = findGraphqlOperation(schema, id);
+  if (!operation) {
+    throw new Error(`GraphQL operation not found: ${id}`);
+  }
+  const returnType = graphqlTypeRef(operation.field.type);
+  const auth = await authPlan(packageId);
+  return {
+    id: operation.id,
+    qualified_id: operation.qualified_id,
+    method: operation.method,
+    path: operation.path,
+    summary: operation.summary,
+    description: operation.summary,
+    safety: operation.safety,
+    parameters: (operation.field.args ?? []).map((arg) => ({
+      name: arg.name,
+      required: graphqlTypeRef(arg.type).required,
+      type: graphqlTypeRef(arg.type).display,
+      description: arg.description,
+      default: arg.defaultValue,
+    })),
+    return_type: returnType.display,
+    auth: {
+      status: auth.status,
+      mode: auth.runtime?.mode,
+      required_env: unique([
+        auth.profile_auth?.env,
+        auth.profile_auth?.usernameEnv,
+        auth.profile_auth?.passwordEnv,
+        auth.profile_auth?.refreshTokenEnv,
+        auth.profile_auth?.accessTokenEnv,
+        auth.profile_auth?.organizationIdEnv,
+      ]),
+      gaps: auth.gaps ?? [],
+    },
+  };
+};
+
 const securitySchemes = (spec) =>
   Object.entries({ ...(spec.components?.securitySchemes ?? {}), ...(spec.securityDefinitions ?? {}) })
     .map(([name, scheme]) => ({
@@ -956,6 +1145,16 @@ const tokenParameterInjections = (auth, parameters) =>
 const authPlan = async (packageId) => {
   const profile = await readProfile(packageId);
   if (profile.graphqlUrl) {
+    if (profile.auth.type === "unknown") {
+      return {
+        package: packageId,
+        status: "ready",
+        source: "graphql",
+        profile_auth: profile.auth,
+        runtime: { mode: "none", default_injection: null },
+        gaps: [],
+      };
+    }
     return {
       package: packageId,
       status: "adapter_needed",
@@ -1142,15 +1341,111 @@ const callOperation = async (packageId, id, args) => {
   };
 };
 
+const graphqlVariableType = (type) => graphqlTypeRef(type).display;
+
+const graphqlScalarSelection = async (profile, schema, typeRef) => {
+  const ref = graphqlTypeRef(typeRef);
+  if (["SCALAR", "ENUM"].includes(ref.kind)) {
+    return "";
+  }
+  const fieldsForType = graphqlSchemaType(schema, ref.named)?.fields ?? await graphqlTypeFields(profile, ref.named);
+  const fields = fieldsForType
+    .filter((field) => ["SCALAR", "ENUM", "NON_NULL"].includes(field.type.kind) || ["SCALAR", "ENUM"].includes(field.type.ofType?.kind))
+    .slice(0, 8)
+    .map((field) => field.name);
+  return fields.length > 0 ? `{ ${fields.join(" ")} }` : "{ __typename }";
+};
+
+const callGraphqlOperation = async (packageId, id, args) => {
+  const profile = await readProfile(packageId);
+  const schema = await graphqlSchema(profile);
+  const operation = findGraphqlOperation(schema, id);
+  if (!operation) {
+    throw new Error(`GraphQL operation not found: ${id}`);
+  }
+  if (operation.safety !== "read") {
+    throw new Error("Only read-only GraphQL query operations can be called by the spike runtime.");
+  }
+
+  const parameters = parseParamValues(args);
+  const missing = (operation.field.args ?? [])
+    .filter((arg) => graphqlTypeRef(arg.type).required && parameters[arg.name] === undefined)
+    .map((arg) => arg.name);
+  if (missing.length > 0) {
+    throw new Error(`Missing required parameters: ${missing.join(", ")}`);
+  }
+
+  const selected = parseRepeatedFlag(args, "--select");
+  const selection = selected.length > 0 ? `{ ${selected.join(" ")} }` : await graphqlScalarSelection(profile, schema, operation.field.type);
+  const variableDefinitions = (operation.field.args ?? [])
+    .map((arg) => `$${arg.name}: ${graphqlVariableType(arg.type)}`)
+    .join(", ");
+  const argumentList = (operation.field.args ?? [])
+    .filter((arg) => parameters[arg.name] !== undefined)
+    .map((arg) => `${arg.name}: $${arg.name}`)
+    .join(", ");
+  const query = [
+    "query ApiCodeModeCall",
+    variableDefinitions ? `(${variableDefinitions})` : "",
+    `{ ${operation.field.name}${argumentList ? `(${argumentList})` : ""} ${selection} }`,
+  ].join("");
+
+  if (args.includes("--dry-run")) {
+    return {
+      package: packageId,
+      operation: operation.qualified_id,
+      status: "dry_run",
+      request: {
+        method: "POST",
+        url: profile.graphqlUrl,
+        query,
+        variables: Object.keys(parameters).sort(),
+        safety: operation.safety,
+      },
+    };
+  }
+
+  const { response, json, text } = await graphqlRequest(profile.graphqlUrl, { query, variables: parameters }, graphqlAuthHeaders(profile));
+  return {
+    package: packageId,
+    operation: operation.qualified_id,
+    status: response.ok && !json?.errors ? "ok" : "graphql_error",
+    request: {
+      method: "POST",
+      url: profile.graphqlUrl,
+      variables: Object.keys(parameters).sort(),
+      safety: operation.safety,
+    },
+    response: {
+      status: response.status,
+      status_text: response.statusText,
+      content_type: response.headers.get("content-type") ?? "",
+      json: json ?? undefined,
+      text: json ? undefined : text.slice(0, 2000),
+    },
+  };
+};
+
 const validateProfile = async (packageId) => {
   const profile = await readProfile(packageId);
   if (profile.graphqlUrl) {
-    return {
-      package: packageId,
-      status: "unsupported",
-      source: "graphql",
-      gap: "GraphQL introspection is not implemented yet.",
-    };
+    try {
+      const operations = await graphqlPackageOperations(packageId);
+      return {
+        package: packageId,
+        status: "ok",
+        source: "graphql",
+        operations: operations.length,
+        methods: unique(operations.map((operation) => operation.method)).sort(),
+      };
+    } catch (error) {
+      return {
+        package: packageId,
+        status: "unsupported",
+        source: "graphql",
+        gap: error.message,
+      };
+    }
   }
   if (!profile.apisGuru && !profile.openapiUrl && profile.openapiUrls.length === 0) {
     return {
@@ -1370,6 +1665,19 @@ const packageCommand = async (packageId, subcommand, args) => {
     return null;
   }
   if (profile.graphqlUrl && !profile.apisGuru && !profile.openapiUrl && profile.openapiUrls.length === 0) {
+    if (!subcommand || subcommand === "ops") {
+      try {
+        return searchOperations(await graphqlPackageOperations(packageId), args.join(" "));
+      } catch {
+        return validateProfile(packageId);
+      }
+    }
+    if (subcommand === "describe") {
+      return describeGraphqlOperation(packageId, args.join(" "));
+    }
+    if (subcommand === "call") {
+      return callGraphqlOperation(packageId, args[0], args.slice(1));
+    }
     return validateProfile(packageId);
   }
   if (!subcommand || subcommand === "ops") {
