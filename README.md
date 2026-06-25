@@ -31,6 +31,9 @@ progressive discovery loop.
 npm run bootstrap-new -- example-api --name "Example API" --docs-url https://docs.example.com
 npm run bootstrap-prompt -- cable
 npm run bootstrap-agent -- cable --runner gemini --timeout-ms 120000
+npm run discover-sources -- cable
+npm run discover-sources -- https://docs.cable.tech/
+npm run discover-apply -- cable --candidate openapi_urls-1
 npm run search -- github
 npm run ops -- github
 npm run ops -- stripe customer
@@ -59,6 +62,13 @@ it does not apply edits.
 
 See `docs/self-healing.md` for the target `bootstrap-agent` flow.
 
+## Source Discovery
+
+`discover-sources` finds machine-readable sources without writing files. It
+checks APIs.guru, common OpenAPI/Swagger paths, `llms.txt`, docs MCP links, and
+OpenAPI index pages. `discover-apply` writes one selected candidate into a
+profile and reruns validation.
+
 ## Validation Set
 
 The first `pkgs/` set intentionally mixes API styles:
@@ -73,6 +83,7 @@ The first `pkgs/` set intentionally mixes API styles:
 - `twilio`: broad API family via APIs.guru.
 - `linear`: GraphQL API, currently unsupported by the runtime.
 - `cable`: Fern-hosted docs with `llms.txt`, MCP metadata, and three OpenAPI specs.
+- `weatherbit`, `visualcrossing-weather`, `bulksms`, `sms77`, `interzoid-currency-rate`: smaller provider APIs via APIs.guru.
 
 ## Why Not A Mega-MCP?
 

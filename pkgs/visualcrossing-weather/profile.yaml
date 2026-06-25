@@ -1,0 +1,11 @@
+id: visualcrossing-weather
+name: Visual Crossing Weather
+sources:
+  apis_guru: visualcrossing.com:weather
+auth:
+  type: api_key
+  env: VISUALCROSSING_API_KEY
+policy:
+  default_write: confirm
+output:
+  default_format: json

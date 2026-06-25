@@ -1,0 +1,11 @@
+id: sms77
+name: sms77
+sources:
+  apis_guru: sms77.io
+auth:
+  type: api_key
+  env: SMS77_API_KEY
+policy:
+  default_write: confirm
+output:
+  default_format: json

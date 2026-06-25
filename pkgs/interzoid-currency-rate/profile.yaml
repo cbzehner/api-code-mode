@@ -1,0 +1,11 @@
+id: interzoid-currency-rate
+name: Interzoid Currency Rate
+sources:
+  apis_guru: interzoid.com:getcurrencyrate
+auth:
+  type: api_key
+  env: INTERZOID_API_KEY
+policy:
+  default_write: confirm
+output:
+  default_format: json

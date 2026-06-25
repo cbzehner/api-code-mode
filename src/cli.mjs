@@ -1,9 +1,11 @@
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 
 const API_INDEX_URL = "https://api.apis.guru/v2/list.json";
 
 const [command, packageIdOrQuery, ...restArgs] = process.argv.slice(2);
+const FETCH_TIMEOUT_MS = 10000;
 
 const packageDirectoryUrl = (packageId) => new URL(`../pkgs/${packageId}/`, import.meta.url);
 
@@ -14,11 +16,33 @@ const assertPackageId = (packageId) => {
 };
 
 const readJson = async (url) => {
-  const response = await fetch(url);
+  const response = await fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
   if (!response.ok) {
     throw new Error(`GET ${url} failed: ${response.status} ${response.statusText}`);
   }
   return response.json();
+};
+
+const readText = async (url) => {
+  try {
+    const response = await fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
+    return {
+      ok: response.ok,
+      status: response.status,
+      contentType: response.headers.get("content-type") ?? "",
+      text: await response.text(),
+      url: response.url,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      status: 0,
+      contentType: "",
+      text: "",
+      url,
+      error: error.name === "TimeoutError" ? "timeout" : error.message,
+    };
+  }
 };
 
 const latestVersion = (api) => api.versions[api.preferred] ?? Object.values(api.versions).at(-1);
@@ -162,6 +186,287 @@ const searchApis = async (term) => {
       preferred: api.preferred,
       spec: latestVersion(api).swaggerUrl,
     }));
+};
+
+const maybeUrl = (value) => {
+  try {
+    return new URL(value.includes("://") ? value : `https://${value}`);
+  } catch {
+    return null;
+  }
+};
+
+const unique = (values) => [...new Set(values.filter(Boolean))];
+
+const slug = (value) => value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+
+const shortHash = (value) => createHash("sha256").update(value).digest("hex").slice(0, 8);
+
+const absoluteUrl = (baseUrl, href) => {
+  try {
+    return new URL(href, baseUrl).toString();
+  } catch {
+    return null;
+  }
+};
+
+const textLinks = (text) => unique([
+  ...[...text.matchAll(/\[[^\]]*]\((https?:\/\/[^)\s]+)\)/g)].map((match) => match[1]),
+  ...[...text.matchAll(/https?:\/\/[^\s)]+/g)].map((match) => match[0].replace(/[.,;:]$/, "")),
+]);
+
+const htmlLinks = (baseUrl, text) =>
+  [...text.matchAll(/href=["']([^"']+)["']/g)]
+    .map((match) => absoluteUrl(baseUrl, match[1]))
+    .filter(Boolean);
+
+const looksLikeSpecUrl = (url) => /\.(json|ya?ml)(?:[?#].*)?$/i.test(url) && /openapi|swagger|api/i.test(url);
+
+const validateOpenApiUrl = async (url) => {
+  const response = await readText(url);
+  if (!response.ok) {
+    return { url, valid: false, status: response.status, kind: "http_error" };
+  }
+
+  const trimmed = response.text.trim();
+  if (trimmed.startsWith("<!DOCTYPE") || trimmed.startsWith("<html")) {
+    return {
+      url,
+      valid: false,
+      kind: "html",
+      links: htmlLinks(response.url, response.text).filter(looksLikeSpecUrl),
+    };
+  }
+
+  if (trimmed.startsWith("{")) {
+    try {
+      const spec = JSON.parse(trimmed);
+      return {
+        url,
+        valid: Boolean((spec.openapi || spec.swagger) && spec.info && spec.paths),
+        kind: "openapi_json",
+        openapi: spec.openapi ?? spec.swagger,
+        title: spec.info?.title,
+        paths: Object.keys(spec.paths ?? {}).length,
+      };
+    } catch {
+      return { url, valid: false, kind: "invalid_json" };
+    }
+  }
+
+  if (/^openapi:\s*/m.test(trimmed)) {
+    return { url, valid: false, kind: "openapi_yaml_unsupported" };
+  }
+
+  return { url, valid: false, kind: "unknown" };
+};
+
+const sourceInputs = async (input) => {
+  if (/^[a-z0-9][a-z0-9-]*$/.test(input)) {
+    try {
+      const profile = await readProfile(input);
+      return {
+        input,
+        package: input,
+        name: profile.name,
+        apisGuru: profile.apisGuru,
+        urls: unique([profile.docsUrl, profile.llmsUrl, profile.openapiUrl, ...profile.openapiUrls]),
+      };
+    } catch {
+      // Fall through and treat the value as a domain/search term.
+    }
+  }
+
+  const url = maybeUrl(input);
+  return {
+    input,
+    package: null,
+    name: input,
+    apisGuru: null,
+    urls: url ? [url.toString()] : [],
+  };
+};
+
+const candidateId = (type, candidate) => {
+  if (candidate.apis_guru) {
+    return `${type}-${slug(candidate.apis_guru)}`;
+  }
+  if (candidate.url) {
+    return `${type}-${shortHash(candidate.url)}`;
+  }
+  if (candidate.urls) {
+    return `${type}-${shortHash([...candidate.urls].sort().join("\n"))}`;
+  }
+  return `${type}-${shortHash(JSON.stringify(candidate))}`;
+};
+
+const makeCandidate = (type, candidate) => ({
+  id: candidateId(type, candidate),
+  type,
+  ...candidate,
+});
+
+const pushCandidate = (candidates, candidate) => {
+  if (!candidates.some((existing) => existing.id === candidate.id)) {
+    candidates.push(candidate);
+  }
+};
+
+const discoverSources = async (input) => {
+  const context = await sourceInputs(input);
+  const candidates = [];
+  const evidence = [];
+
+  const addOpenApiCandidate = async (urls, evidenceItems) => {
+    const validations = await Promise.all(urls.map(validateOpenApiUrl));
+    const validSpecs = validations.filter((result) => result.valid);
+    if (validSpecs.length === 0) {
+      evidence.push(...validations.map((result) => ({ source: result.url, detail: `not a valid OpenAPI source: ${result.kind}` })));
+      return;
+    }
+
+    pushCandidate(candidates, makeCandidate(validSpecs.length === 1 ? "openapi_url" : "openapi_urls", {
+      confidence: validSpecs.every((spec) => spec.kind === "openapi_json" || spec.kind === "openapi_yaml") ? "high" : "medium",
+      urls: validSpecs.map((spec) => spec.url),
+      specs: validSpecs.map((spec) => ({
+        url: spec.url,
+        openapi: spec.openapi,
+        title: spec.title,
+        paths: spec.paths,
+      })),
+      evidence: evidenceItems,
+    }));
+  };
+
+  if (context.apisGuru) {
+    pushCandidate(candidates, makeCandidate("apis_guru", {
+      confidence: "high",
+      apis_guru: context.apisGuru,
+      evidence: [{ source: `pkgs/${context.package}/profile.yaml`, detail: `profile already defines APIs.guru entry ${context.apisGuru}` }],
+    }));
+  }
+
+  const query = context.urls[0] ? maybeUrl(context.urls[0])?.hostname.replace(/^www\./, "") : context.name;
+  if (query) {
+    const apiMatches = await searchApis(query);
+    const exactMatch = apiMatches.find((match) => match.name === query || match.name.startsWith(`${query}:`));
+    if (exactMatch) {
+      pushCandidate(candidates, makeCandidate("apis_guru", {
+        confidence: "high",
+        apis_guru: exactMatch.name,
+        url: exactMatch.spec,
+        evidence: [{ source: API_INDEX_URL, detail: `matched APIs.guru entry ${exactMatch.name}` }],
+      }));
+    }
+  }
+
+  const rootUrls = unique(context.urls.map((value) => maybeUrl(value)?.origin).filter(Boolean));
+  const probeUrls = unique([
+    ...context.urls.filter(looksLikeSpecUrl),
+    ...rootUrls.flatMap((origin) => [
+      `${origin}/openapi.json`,
+      `${origin}/swagger.json`,
+      `${origin}/openapi.yaml`,
+      `${origin}/swagger.yaml`,
+    ]),
+  ]);
+
+  for (const url of probeUrls) {
+    const validation = await validateOpenApiUrl(url);
+    if (validation.valid) {
+      await addOpenApiCandidate([url], [{ source: url, detail: `validated ${validation.kind}` }]);
+    } else if (validation.kind === "html" && validation.links.length > 0) {
+      await addOpenApiCandidate(validation.links, [{ source: url, detail: "parsed OpenAPI index links from HTML" }]);
+    }
+  }
+
+  const llmsUrls = unique([
+    ...context.urls.filter((url) => url.endsWith("/llms.txt") || url.endsWith("llms.txt")),
+    ...rootUrls.map((origin) => `${origin}/llms.txt`),
+  ]);
+
+  for (const url of llmsUrls) {
+    const response = await readText(url);
+    if (!response.ok) {
+      continue;
+    }
+
+    const links = textLinks(response.text);
+    const openApiLinks = links.filter(looksLikeSpecUrl);
+    const mcpLinks = links.filter((link) => link.includes("/_mcp/"));
+    if (mcpLinks.length > 0) {
+      pushCandidate(candidates, makeCandidate("mcp_url", {
+        confidence: "high",
+        url: mcpLinks[0],
+        evidence: [{ source: url, detail: "found MCP URL in llms.txt" }],
+      }));
+    }
+
+    if (openApiLinks.length > 0) {
+      for (const openApiLink of openApiLinks) {
+        const validation = await validateOpenApiUrl(openApiLink);
+        if (validation.valid) {
+          await addOpenApiCandidate([openApiLink], [{ source: url, detail: "found OpenAPI link in llms.txt" }]);
+        } else if (validation.kind === "html" && validation.links.length > 0) {
+          await addOpenApiCandidate(validation.links, [{ source: openApiLink, detail: "parsed OpenAPI index links linked from llms.txt" }]);
+        }
+      }
+    }
+  }
+
+  return {
+    input,
+    package: context.package,
+    status: candidates.length > 0 ? "candidates_found" : "no_candidates",
+    candidates,
+    evidence,
+  };
+};
+
+const replaceSourcesBlock = (profileText, lines) => {
+  const block = `${lines.join("\n")}\n`;
+  const replaced = profileText.replace(/^sources:\n(?:  .+\n|    - .+\n)+/m, block);
+  if (replaced === profileText) {
+    throw new Error("Could not replace sources block in profile.yaml");
+  }
+  return replaced;
+};
+
+const applyDiscoveryCandidate = async (packageId) => {
+  assertPackageId(packageId);
+  const candidateId = parseFlag("--candidate", null);
+  if (!candidateId) {
+    throw new Error("discover-apply requires --candidate <id>");
+  }
+
+  const profile = await readProfile(packageId);
+  const discovery = await discoverSources(packageId);
+  const candidate = discovery.candidates.find((item) => item.id === candidateId);
+  if (!candidate) {
+    throw new Error(`Discovery candidate not found: ${candidateId}`);
+  }
+
+  const sourceLines = [
+    "sources:",
+    profile.docsUrl ? `  docs_url: ${profile.docsUrl}` : null,
+    profile.llmsUrl ? `  llms_url: ${profile.llmsUrl}` : null,
+    profile.mcpUrl ? `  mcp_url: ${profile.mcpUrl}` : null,
+    profile.graphqlUrl ? `  graphql_url: ${profile.graphqlUrl}` : null,
+    candidate.type === "apis_guru" ? `  apis_guru: ${candidate.apis_guru}` : null,
+    candidate.type === "mcp_url" && candidate.url !== profile.mcpUrl ? `  mcp_url: ${candidate.url}` : null,
+    candidate.type === "openapi_url" ? `  openapi_url: ${candidate.urls[0]}` : null,
+    candidate.type === "openapi_urls" ? "  openapi_urls:" : null,
+    ...(candidate.type === "openapi_urls" ? candidate.urls.map((url) => `    - ${url}`) : []),
+  ].filter(Boolean);
+
+  const nextProfile = replaceSourcesBlock(profile.text, sourceLines);
+  await writeFile(new URL("profile.yaml", packageDirectoryUrl(packageId)), nextProfile);
+  return {
+    package: packageId,
+    applied: candidate.id,
+    candidate,
+    validation: await validateProfile(packageId),
+  };
 };
 
 const operations = (spec) =>
@@ -492,6 +797,12 @@ const main = async () => {
   }
   if (command === "bootstrap-agent") {
     return bootstrapAgent(packageIdOrQuery);
+  }
+  if (command === "discover-sources") {
+    return discoverSources(packageIdOrQuery);
+  }
+  if (command === "discover-apply") {
+    return applyDiscoveryCandidate(packageIdOrQuery);
   }
   if (command === "search") {
     return searchApis(packageIdOrQuery);

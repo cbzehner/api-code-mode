@@ -1,0 +1,11 @@
+id: weatherbit
+name: Weatherbit
+sources:
+  apis_guru: weatherbit.io
+auth:
+  type: api_key
+  env: WEATHERBIT_API_KEY
+policy:
+  default_write: confirm
+output:
+  default_format: json

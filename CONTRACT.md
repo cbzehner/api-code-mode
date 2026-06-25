@@ -9,6 +9,8 @@ Rust.
 api-code-mode bootstrap-prompt <package>
 api-code-mode bootstrap-new <package> [--name name] [--docs-url url] [--openapi-url url] [--graphql-url url] [--apis-guru id] [--env ENV_VAR]
 api-code-mode bootstrap-agent <package> --runner gemini [--timeout-ms 120000]
+api-code-mode discover-sources <package-or-url>
+api-code-mode discover-apply <package> --candidate <id>
 api-code-mode search <query>
 api-code-mode ops <package> [query]
 api-code-mode describe <package> <operation-id>
@@ -73,3 +75,17 @@ The runner must report `repaired`, `adapter_needed`, `source_missing`, or
 
 Multi-spec packages should expose `qualified_id` values in the form
 `<spec>:<operation-id>` so duplicated operation IDs can be called unambiguously.
+
+## Source Discovery
+
+`discover-sources` returns structured JSON candidates. It must not write files.
+The deterministic pipeline checks APIs.guru, common OpenAPI/Swagger paths,
+`llms.txt`, MCP links, and OpenAPI index pages.
+
+`discover-apply` is the only discovery command that writes profile changes. It
+recomputes candidates, applies the selected candidate to `sources`, and returns
+post-apply validation.
+
+Discovery candidate IDs are content-derived, not positional, so an agent can
+pass a selected candidate from `discover-sources` back to `discover-apply`
+without relying on list order.

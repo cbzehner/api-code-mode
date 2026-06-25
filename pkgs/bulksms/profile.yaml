@@ -1,0 +1,11 @@
+id: bulksms
+name: BulkSMS
+sources:
+  apis_guru: bulksms.com
+auth:
+  type: unknown
+  env: BULKSMS_TOKEN
+policy:
+  default_write: confirm
+output:
+  default_format: json

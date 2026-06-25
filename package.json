@@ -6,6 +6,8 @@
     "bootstrap-agent": "node src/cli.mjs bootstrap-agent",
     "bootstrap-new": "node src/cli.mjs bootstrap-new",
     "bootstrap-prompt": "node src/cli.mjs bootstrap-prompt",
+    "discover-apply": "node src/cli.mjs discover-apply",
+    "discover-sources": "node src/cli.mjs discover-sources",
     "search": "node src/cli.mjs search",
     "ops": "node src/cli.mjs ops",
     "describe": "node src/cli.mjs describe",
