@@ -151,6 +151,7 @@ const readProfile = async (packageId) => {
     openapiUrl: text.match(/openapi_url:\s*(.+)/)?.[1]?.trim(),
     openapiUrls: listValues("openapi_urls"),
     graphqlUrl: text.match(/graphql_url:\s*(.+)/)?.[1]?.trim(),
+    serverUrl: sectionScalar("sources", "server_url"),
     docsUrl: text.match(/docs_url:\s*(.+)/)?.[1]?.trim(),
     llmsUrl: text.match(/llms_url:\s*(.+)/)?.[1]?.trim(),
     mcpUrl: text.match(/mcp_url:\s*(.+)/)?.[1]?.trim(),
@@ -217,7 +218,7 @@ const fetchSpec = async (packageId) => {
 const fetchSpecs = async (profile) => {
   const urls = [...profile.openapiUrls, profile.openapiUrl].filter(Boolean);
   if (urls.length > 0) {
-    return Promise.all(urls.map(async (url) => ({ source: url, spec: await readJson(url) })));
+    return Promise.all(urls.map(async (url) => ({ source: url, serverUrl: profile.serverUrl, spec: await readJson(url) })));
   }
   if (!profile.apisGuru) {
     throw new Error(`pkgs/${profile.id}/profile.yaml does not define a supported OpenAPI source`);
@@ -228,7 +229,7 @@ const fetchSpecs = async (profile) => {
     throw new Error(`API not found in APIs.guru index: ${profile.apisGuru}`);
   }
   const source = latestVersion(api).swaggerUrl;
-  return [{ source, spec: await readJson(source) }];
+  return [{ source, serverUrl: profile.serverUrl, spec: await readJson(source) }];
 };
 
 const fetchPackageSpecs = async (packageId) => fetchSpecs(await readProfile(packageId));
@@ -1006,7 +1007,7 @@ const describeOperation = (specs, id) => {
     ...match,
     description: operation.description,
     safety: operationSafety(match.method),
-    parameters: (operation.parameters ?? []).map((parameter) => resolveRef(spec, parameter)),
+    parameters: (operation.parameters ?? []).map((parameter) => resolveRef(spec, parameter)).filter(Boolean),
     requestBody: resolveRef(spec, operation.requestBody),
     security: operation.security ?? spec.security ?? [],
   };
@@ -1103,6 +1104,7 @@ const authLikeParameters = (specs, auth) =>
         .flatMap(([method, operation]) =>
           (operation.parameters ?? [])
             .map((parameter) => resolveRef(spec, parameter))
+            .filter(Boolean)
             .filter((parameter) => {
               const name = parameter.name?.toLowerCase?.() ?? "";
               const authNames = ["authorization", "api_key", "apikey", "x-api-key"];
@@ -1264,7 +1266,10 @@ const authPlan = async (packageId) => {
   };
 };
 
-const serverUrl = (spec) => {
+const serverUrl = (spec, overrideUrl) => {
+  if (overrideUrl) {
+    return overrideUrl;
+  }
   if (spec.servers?.[0]?.url) {
     return spec.servers[0].url;
   }
@@ -1279,7 +1284,8 @@ const joinUrlTemplate = (baseUrl, path) => `${baseUrl.replace(/\/+$/, "")}/${pat
 const requestPlan = (spec, id) => {
   const specs = Array.isArray(spec) ? spec : [{ source: "inline", spec }];
   const operation = describeOperation(specs, id);
-  const selectedSpec = specs.find((entry) => entry.source === operation.source).spec;
+  const selectedEntry = specs.find((entry) => entry.source === operation.source);
+  const selectedSpec = selectedEntry.spec;
   const parameters = operation.parameters ?? [];
   const pathParameters = parameters.filter((parameter) => parameter.in === "path");
   const queryParameters = parameters.filter((parameter) => parameter.in === "query");
@@ -1292,7 +1298,7 @@ const requestPlan = (spec, id) => {
     spec: operation.spec,
     spec_title: operation.spec_title,
     method: operation.method,
-    url_template: joinUrlTemplate(serverUrl(selectedSpec), operation.path),
+    url_template: joinUrlTemplate(serverUrl(selectedSpec, selectedEntry.serverUrl), operation.path),
     safety: operationSafety(operation.method),
     path_parameters: pathParameters.map((parameter) => ({
       name: parameter.name,
@@ -1343,10 +1349,6 @@ const operationSecurityRequired = (security) =>
 
 const operationAuthInjections = async (packageId, plan) => {
   const auth = await authPlan(packageId);
-  if (auth.status !== "ready") {
-    throw new Error(`Auth is not ready for ${packageId}: ${(auth.gaps ?? []).join("; ")}`);
-  }
-
   const operationParameterKeys = new Set([
     ...plan.query_parameters.map((parameter) => `query:${parameter.name}`.toLowerCase()),
     ...plan.header_parameters.map((parameter) => `header:${parameter.name}`.toLowerCase()),
@@ -1355,6 +1357,11 @@ const operationAuthInjections = async (packageId, plan) => {
     .filter((injection) => operationParameterKeys.has(authInjectionKey(injection)));
   const defaultInjection = auth.runtime?.default_injection;
   const needsDefaultInjection = defaultInjection && operationSecurityRequired(plan.security);
+  const needsAuth = parameterInjections.length > 0 || operationSecurityRequired(plan.security);
+  if (auth.status !== "ready" && needsAuth) {
+    throw new Error(`Auth is not ready for ${packageId}: ${(auth.gaps ?? []).join("; ")}`);
+  }
+
   const tokenExchangeInjection = auth.runtime?.token_exchange?.access_token_env ? {
     in: "header",
     name: "Authorization",

@@ -14,6 +14,7 @@
     "ops": "node src/cli.mjs ops",
     "describe": "node src/cli.mjs describe",
     "gaps": "node src/cli.mjs gaps",
+    "matrix": "node scripts/integration-matrix.mjs",
     "plan-auth": "node src/cli.mjs plan-auth",
     "plan-call": "node src/cli.mjs plan-call",
     "smoke": "bash scripts/smoke.sh",

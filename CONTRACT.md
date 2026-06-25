@@ -87,11 +87,14 @@ sources:
   docs_url: https://docs.example.com
   llms_url: https://docs.example.com/llms.txt
   mcp_url: https://docs.example.com/_mcp/server
+  server_url: https://api.example.com
 ```
 
 Only `apis_guru`, `openapi_url`, and `openapi_urls` are executable today.
 `graphql_url`, `docs_url`, `llms_url`, and `mcp_url` are discovery/adapter
 inputs until adapters exist.
+`server_url` overrides missing or unsuitable server metadata in the upstream
+spec and is used when planning calls.
 
 Supported auth fields:
 

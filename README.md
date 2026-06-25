@@ -124,6 +124,19 @@ The first `pkgs/` set intentionally mixes API styles:
 - `cable`: Fern-hosted docs with `llms.txt`, MCP metadata, and three OpenAPI specs.
 - `weatherbit`, `visualcrossing-weather`, `bulksms`, `sms77`, `interzoid-currency-rate`: smaller provider APIs via APIs.guru.
 
+For broader coverage, run:
+
+```bash
+npm run matrix
+```
+
+The matrix creates temporary `pkgs/matrix-*` profiles from
+`test-fixtures/api-matrix.json`, exercises validate/ops/describe/read-only
+dry-run through the normal CLI, reports edge cases as JSON, and removes the
+temporary profiles. The current fixture covers 41 APIs across OpenAPI,
+Swagger 2.0, GraphQL, bearer/API-key/basic/OAuth auth, missing server metadata,
+and POST-only APIs.
+
 ## Why Not A Mega-MCP?
 
 A mega-MCP forces the agent to load every endpoint as a tool. This keeps the MCP
