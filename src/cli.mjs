@@ -35,14 +35,9 @@ const publicHelp = () => ({
       description: "Inspect one operation without loading the whole API.",
       examples: ["api-code-mode cable describe api-reference:request-token"],
     },
-    {
-      command: "<package> plan-call <operation-id>",
-      description: "Return the structured request plan for one operation.",
-      examples: ["api-code-mode cable plan-call api-reference:request-token"],
-    },
   ],
   notes: [
-    "Lower-level discovery, auth, bootstrap, and validation commands are available for agents and maintainers but hidden from public help.",
+    "Lower-level discovery, planning, auth, bootstrap, and validation commands are available for agents and maintainers but hidden from public help.",
     "The spike plans calls but does not execute arbitrary API calls yet.",
   ],
 });
@@ -640,9 +635,8 @@ const generatePackage = async (input) => {
     commands: [
       `api-code-mode ${packageId} ops`,
       `api-code-mode ${packageId} describe <operation-id>`,
-      `api-code-mode ${packageId} plan-call <operation-id>`,
     ],
-    diagnostics: "Private discovery, auth, and validation commands remain available for agents and maintainers.",
+    diagnostics: "Private discovery, planning, auth, and validation commands remain available for agents and maintainers.",
   };
 };
 

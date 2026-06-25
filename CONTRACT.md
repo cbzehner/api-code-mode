@@ -10,7 +10,6 @@ api-code-mode help
 api-code-mode generate <domain-or-url>
 api-code-mode <package> ops [query]
 api-code-mode <package> describe <operation-id>
-api-code-mode <package> plan-call <operation-id>
 ```
 
 Private diagnostic commands remain stable for agents and maintainers, but they

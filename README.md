@@ -32,7 +32,6 @@ npm run help
 npm run generate -- cable.tech
 node src/cli.mjs cable ops transaction
 node src/cli.mjs cable describe api-reference:request-token
-node src/cli.mjs cable plan-call api-reference:request-token
 ```
 
 `generate` is the user-facing orchestration command. It derives a package id
@@ -48,6 +47,7 @@ not appear in public help.
 npm run discover-sources -- cable
 npm run discover-apply -- cable --candidate openapi_urls-<hash>
 npm run plan-auth -- slack
+npm run plan-call -- github apps/delete-installation
 npm run validate
 npm run gaps
 npm run smoke
