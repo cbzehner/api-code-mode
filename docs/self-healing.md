@@ -18,6 +18,7 @@ verify the repair.
 ## Target Flow
 
 ```bash
+api-code-mode bootstrap-new cable --name Cable --docs-url https://docs.cable.tech/
 api-code-mode validate cable
 api-code-mode bootstrap-agent cable --runner gemini
 api-code-mode validate cable

@@ -1,9 +1,17 @@
-import { readdir, readFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
 
 const API_INDEX_URL = "https://api.apis.guru/v2/list.json";
 
 const [command, packageIdOrQuery, ...restArgs] = process.argv.slice(2);
+
+const packageDirectoryUrl = (packageId) => new URL(`../pkgs/${packageId}/`, import.meta.url);
+
+const assertPackageId = (packageId) => {
+  if (!/^[a-z0-9][a-z0-9-]*$/.test(packageId)) {
+    throw new Error("Package id must use lowercase letters, numbers, and hyphens.");
+  }
+};
 
 const readJson = async (url) => {
   const response = await fetch(url);
@@ -29,7 +37,8 @@ const resolveRef = (spec, value) => {
 };
 
 const readProfile = async (packageId) => {
-  const text = await readFile(new URL(`../pkgs/${packageId}/profile.yaml`, import.meta.url), "utf8");
+  assertPackageId(packageId);
+  const text = await readFile(new URL("profile.yaml", packageDirectoryUrl(packageId)), "utf8");
   return {
     id: packageId,
     name: text.match(/^name:\s*(.+)$/m)?.[1]?.trim(),
@@ -38,6 +47,63 @@ const readProfile = async (packageId) => {
     graphqlUrl: text.match(/graphql_url:\s*(.+)/)?.[1]?.trim(),
     docsUrl: text.match(/docs_url:\s*(.+)/)?.[1]?.trim(),
     text,
+  };
+};
+
+const createDraftProfile = async (packageId) => {
+  assertPackageId(packageId);
+  const name = parseFlag("--name", packageId);
+  const docsUrl = parseFlag("--docs-url", null);
+  const openapiUrl = parseFlag("--openapi-url", null);
+  const graphqlUrl = parseFlag("--graphql-url", null);
+  const apisGuru = parseFlag("--apis-guru", null);
+  const env = parseFlag("--env", null);
+
+  const sourceLines = [
+    "sources:",
+    apisGuru ? `  apis_guru: ${apisGuru}` : null,
+    openapiUrl ? `  openapi_url: ${openapiUrl}` : null,
+    graphqlUrl ? `  graphql_url: ${graphqlUrl}` : null,
+    docsUrl ? `  docs_url: ${docsUrl}` : null,
+    !apisGuru && !openapiUrl && !graphqlUrl && !docsUrl ? "  docs_url: unknown" : null,
+  ].filter(Boolean);
+
+  const profile = [
+    `id: ${packageId}`,
+    `name: ${name}`,
+    ...sourceLines,
+    "auth:",
+    "  type: unknown",
+    env ? `  env: ${env}` : null,
+    "policy:",
+    "  default_write: confirm",
+    "output:",
+    "  default_format: json",
+    "",
+  ].filter((line) => line !== null).join("\n");
+
+  await mkdir(packageDirectoryUrl(packageId), { recursive: true });
+  const profileUrl = new URL("profile.yaml", packageDirectoryUrl(packageId));
+  try {
+    await readFile(profileUrl, "utf8");
+    throw new Error(`pkgs/${packageId}/profile.yaml already exists`);
+  } catch (error) {
+    if (error.code !== "ENOENT") {
+      throw error;
+    }
+  }
+
+  await writeFile(profileUrl, profile, { flag: "wx" });
+  const validation = await validateProfile(packageId);
+  return {
+    package: packageId,
+    created: `pkgs/${packageId}/profile.yaml`,
+    validation,
+    next_steps: [
+      `npm run bootstrap-prompt -- ${packageId}`,
+      `npm run bootstrap-agent -- ${packageId} --runner gemini --timeout-ms 120000`,
+      `npm run validate -- ${packageId}`,
+    ],
   };
 };
 
@@ -375,6 +441,9 @@ const main = async () => {
 
   if (command === "bootstrap-prompt") {
     return bootstrapPrompt(packageIdOrQuery);
+  }
+  if (command === "bootstrap-new") {
+    return createDraftProfile(packageIdOrQuery);
   }
   if (command === "bootstrap-agent") {
     return bootstrapAgent(packageIdOrQuery);

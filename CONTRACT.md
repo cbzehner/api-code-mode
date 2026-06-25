@@ -7,6 +7,7 @@ Rust.
 
 ```bash
 api-code-mode bootstrap-prompt <package>
+api-code-mode bootstrap-new <package> [--name name] [--docs-url url] [--openapi-url url] [--graphql-url url] [--apis-guru id] [--env ENV_VAR]
 api-code-mode bootstrap-agent <package> --runner gemini [--timeout-ms 120000]
 api-code-mode search <query>
 api-code-mode ops <package> [query]
@@ -51,6 +52,10 @@ Only `apis_guru` and `openapi_url` are executable today. `graphql_url` and
 `bootstrap-prompt <package>` emits a constrained agent task for repairing a
 profile. The task must keep edits scoped to `pkgs/<id>/`, avoid secrets, prefer
 official machine-readable sources, and rerun validation.
+
+`bootstrap-new <package>` creates `pkgs/<id>/profile.yaml` with a conservative
+draft profile. Package ids must use lowercase letters, numbers, and hyphens.
+Existing profiles are never overwritten.
 
 `bootstrap-agent <package> --runner gemini` invokes the generated prompt in
 read-only runner mode. It must not edit files directly in the spike runtime.

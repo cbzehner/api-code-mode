@@ -28,6 +28,7 @@ progressive discovery loop.
 ## Spike Commands
 
 ```bash
+npm run bootstrap-new -- example-api --name "Example API" --docs-url https://docs.example.com
 npm run bootstrap-prompt -- cable
 npm run bootstrap-agent -- cable --runner gemini --timeout-ms 120000
 npm run search -- github
