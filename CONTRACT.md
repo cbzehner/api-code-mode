@@ -6,6 +6,17 @@ Rust.
 ## Commands
 
 ```bash
+api-code-mode help
+api-code-mode generate <domain-or-url>
+api-code-mode <package> ops [query]
+api-code-mode <package> describe <operation-id>
+api-code-mode <package> plan-call <operation-id>
+```
+
+Private diagnostic commands remain stable for agents and maintainers, but they
+must not appear in public help:
+
+```bash
 api-code-mode bootstrap-prompt <package>
 api-code-mode bootstrap-new <package> [--name name] [--docs-url url] [--openapi-url url] [--graphql-url url] [--apis-guru id] [--env ENV_VAR]
 api-code-mode bootstrap-agent <package> --runner gemini [--timeout-ms 120000]
@@ -29,6 +40,10 @@ contract for now.
 ## Packages
 
 Packages live under `pkgs/<id>/profile.yaml`.
+
+`generate <domain-or-url>` derives a package id from the registrable domain
+label, so `cable.tech` and `https://docs.cable.tech/` generate or update
+`pkgs/cable/profile.yaml`.
 
 Supported source fields:
 

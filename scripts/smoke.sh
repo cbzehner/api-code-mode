@@ -3,6 +3,8 @@ set -euo pipefail
 
 rm -rf pkgs/smoke-api-code-mode pkgs/smoke-cable-discovery
 
+npm run help >/tmp/api-code-mode-help.json
+npm run generate -- cable.tech >/tmp/api-code-mode-generate-cable.json
 npm run validate >/tmp/api-code-mode-validate.json
 npm run gaps >/tmp/api-code-mode-gaps.json
 npm run discover-sources -- github.com >/tmp/api-code-mode-github-discovery.json
@@ -26,9 +28,12 @@ npm run plan-auth -- cable >/tmp/api-code-mode-cable-auth-plan.json
 npm run plan-auth -- slack >/tmp/api-code-mode-slack-auth-plan.json
 npm run plan-auth -- sms77 >/tmp/api-code-mode-sms77-auth-plan.json
 npm run plan-auth -- twilio >/tmp/api-code-mode-twilio-auth-plan.json
+node src/cli.mjs cable ops transaction >/tmp/api-code-mode-cable-scoped-ops.json
 
 node -e '
 const fs = require("fs");
+const help = JSON.parse(fs.readFileSync("/tmp/api-code-mode-help.json", "utf8").split("\n").slice(3).join("\n"));
+const generateCable = JSON.parse(fs.readFileSync("/tmp/api-code-mode-generate-cable.json", "utf8").split("\n").slice(3).join("\n"));
 const validate = JSON.parse(fs.readFileSync("/tmp/api-code-mode-validate.json", "utf8").split("\n").slice(3).join("\n"));
 const gaps = JSON.parse(fs.readFileSync("/tmp/api-code-mode-gaps.json", "utf8").split("\n").slice(3).join("\n"));
 const githubDiscovery = JSON.parse(fs.readFileSync("/tmp/api-code-mode-github-discovery.json", "utf8").split("\n").slice(3).join("\n"));
@@ -42,7 +47,20 @@ const cableAuthPlan = JSON.parse(fs.readFileSync("/tmp/api-code-mode-cable-auth-
 const slackAuthPlan = JSON.parse(fs.readFileSync("/tmp/api-code-mode-slack-auth-plan.json", "utf8").split("\n").slice(3).join("\n"));
 const sms77AuthPlan = JSON.parse(fs.readFileSync("/tmp/api-code-mode-sms77-auth-plan.json", "utf8").split("\n").slice(3).join("\n"));
 const twilioAuthPlan = JSON.parse(fs.readFileSync("/tmp/api-code-mode-twilio-auth-plan.json", "utf8").split("\n").slice(3).join("\n"));
+const cableScopedOps = JSON.parse(fs.readFileSync("/tmp/api-code-mode-cable-scoped-ops.json", "utf8"));
 
+if (!help.commands.some((command) => command.command === "generate <domain-or-url>")) {
+  throw new Error("expected public help to include generate");
+}
+if (JSON.stringify(help).includes("discover-sources") || JSON.stringify(help).includes("plan-auth")) {
+  throw new Error("expected public help to hide private diagnostic commands");
+}
+if (generateCable.package !== "cable" || generateCable.status !== "ready") {
+  throw new Error("expected generate cable.tech to produce ready cable package");
+}
+if (!cableScopedOps.some((operation) => operation.qualified_id?.includes("transaction"))) {
+  throw new Error("expected generated cable package-scoped ops to work");
+}
 if (validate.filter((result) => result.status === "ok").length !== 14) {
   throw new Error("expected 14 package profiles to validate");
 }

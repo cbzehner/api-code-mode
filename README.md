@@ -25,21 +25,29 @@ This repo intentionally starts small. `pkgs/` stores curated integration
 profiles; the runtime resolves upstream specs such as APIs.guru and exposes a
 progressive discovery loop.
 
-## Spike Commands
+## Public Flow
 
 ```bash
-npm run bootstrap-new -- example-api --name "Example API" --docs-url https://docs.example.com
-npm run bootstrap-prompt -- cable
-npm run bootstrap-agent -- cable --runner gemini --timeout-ms 120000
+npm run help
+npm run generate -- cable.tech
+node src/cli.mjs cable ops transaction
+node src/cli.mjs cable describe api-reference:request-token
+node src/cli.mjs cable plan-call api-reference:request-token
+```
+
+`generate` is the user-facing orchestration command. It derives a package id
+from the domain, discovers sources, writes or updates `pkgs/<id>/profile.yaml`,
+validates the package, and returns the next package-scoped commands.
+
+## Private Diagnostics
+
+The lower-level commands stay available for agents and maintainers, but they do
+not appear in public help.
+
+```bash
 npm run discover-sources -- cable
-npm run discover-sources -- https://docs.cable.tech/
 npm run discover-apply -- cable --candidate openapi_urls-<hash>
-npm run search -- github
-npm run ops -- github
-npm run ops -- stripe customer
-npm run describe -- github apps/delete-installation
 npm run plan-auth -- slack
-npm run plan-call -- github apps/delete-installation
 npm run validate
 npm run gaps
 npm run smoke

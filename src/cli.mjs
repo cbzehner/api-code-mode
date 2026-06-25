@@ -16,6 +16,37 @@ const assertPackageId = (packageId) => {
   }
 };
 
+const publicHelp = () => ({
+  name: "api-code-mode",
+  description: "Generate local, agent-callable API interfaces from public API docs.",
+  commands: [
+    {
+      command: "generate <domain-or-url>",
+      description: "Discover sources, create a package profile, validate it, and prepare auth/call planning.",
+      examples: ["api-code-mode generate cable.tech", "api-code-mode generate https://docs.cable.tech/"],
+    },
+    {
+      command: "<package> ops [query]",
+      description: "Search operations for a generated package.",
+      examples: ["api-code-mode cable ops transaction", "api-code-mode slack ops chat"],
+    },
+    {
+      command: "<package> describe <operation-id>",
+      description: "Inspect one operation without loading the whole API.",
+      examples: ["api-code-mode cable describe api-reference:request-token"],
+    },
+    {
+      command: "<package> plan-call <operation-id>",
+      description: "Return the structured request plan for one operation.",
+      examples: ["api-code-mode cable plan-call api-reference:request-token"],
+    },
+  ],
+  notes: [
+    "Lower-level discovery, auth, bootstrap, and validation commands are available for agents and maintainers but hidden from public help.",
+    "The spike plans calls but does not execute arbitrary API calls yet.",
+  ],
+});
+
 const readJson = async (url) => {
   const response = await fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
   if (!response.ok) {
@@ -122,29 +153,6 @@ const createDraftProfile = async (packageId) => {
   const apisGuru = parseFlag("--apis-guru", null);
   const env = parseFlag("--env", null);
 
-  const sourceLines = [
-    "sources:",
-    apisGuru ? `  apis_guru: ${apisGuru}` : null,
-    openapiUrl ? `  openapi_url: ${openapiUrl}` : null,
-    graphqlUrl ? `  graphql_url: ${graphqlUrl}` : null,
-    docsUrl ? `  docs_url: ${docsUrl}` : null,
-    !apisGuru && !openapiUrl && !graphqlUrl && !docsUrl ? "  docs_url: unknown" : null,
-  ].filter(Boolean);
-
-  const profile = [
-    `id: ${packageId}`,
-    `name: ${name}`,
-    ...sourceLines,
-    "auth:",
-    "  type: unknown",
-    env ? `  env: ${env}` : null,
-    "policy:",
-    "  default_write: confirm",
-    "output:",
-    "  default_format: json",
-    "",
-  ].filter((line) => line !== null).join("\n");
-
   await mkdir(packageDirectoryUrl(packageId), { recursive: true });
   const profileUrl = new URL("profile.yaml", packageDirectoryUrl(packageId));
   try {
@@ -156,7 +164,7 @@ const createDraftProfile = async (packageId) => {
     }
   }
 
-  await writeFile(profileUrl, profile, { flag: "wx" });
+  await writeFile(profileUrl, draftProfileText({ packageId, name, docsUrl, openapiUrl, graphqlUrl, apisGuru, env }), { flag: "wx" });
   const validation = await validateProfile(packageId);
   return {
     package: packageId,
@@ -229,6 +237,52 @@ const unique = (values) => [...new Set(values.filter(Boolean))];
 const slug = (value) => value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 
 const shortHash = (value) => createHash("sha256").update(value).digest("hex").slice(0, 8);
+
+const packageIdFromInput = (input) => {
+  const parsed = maybeUrl(input);
+  if (!parsed) {
+    return slug(input);
+  }
+  const labels = parsed.hostname.replace(/^www\./, "").split(".");
+  return slug(labels.length > 1 ? labels.at(-2) : labels[0]);
+};
+
+const profileExists = async (packageId) => {
+  try {
+    await readProfile(packageId);
+    return true;
+  } catch (error) {
+    if (error.code === "ENOENT") {
+      return false;
+    }
+    throw error;
+  }
+};
+
+const draftProfileText = ({ packageId, name, docsUrl, openapiUrl, graphqlUrl, apisGuru, env }) => {
+  const sourceLines = [
+    "sources:",
+    apisGuru ? `  apis_guru: ${apisGuru}` : null,
+    openapiUrl ? `  openapi_url: ${openapiUrl}` : null,
+    graphqlUrl ? `  graphql_url: ${graphqlUrl}` : null,
+    docsUrl ? `  docs_url: ${docsUrl}` : null,
+    !apisGuru && !openapiUrl && !graphqlUrl && !docsUrl ? "  docs_url: unknown" : null,
+  ].filter(Boolean);
+
+  return [
+    `id: ${packageId}`,
+    `name: ${name}`,
+    ...sourceLines,
+    "auth:",
+    "  type: unknown",
+    env ? `  env: ${env}` : null,
+    "policy:",
+    "  default_write: confirm",
+    "output:",
+    "  default_format: json",
+    "",
+  ].filter((line) => line !== null).join("\n");
+};
 
 const absoluteUrl = (baseUrl, href) => {
   try {
@@ -518,29 +572,91 @@ const discoverSources = async (input) => {
   };
 };
 
-const replaceSourcesBlock = (profileText, lines) => {
-  const block = `${lines.join("\n")}\n`;
-  const replaced = profileText.replace(/^sources:\n(?:  .+\n|    - .+\n)+/m, block);
-  if (replaced === profileText) {
-    throw new Error("Could not replace sources block in profile.yaml");
+const preferredSourceCandidate = (candidates) =>
+  candidates.find((candidate) => candidate.type === "openapi_urls")
+  ?? candidates.find((candidate) => candidate.type === "openapi_url")
+  ?? candidates.find((candidate) => candidate.type === "apis_guru")
+  ?? candidates.find((candidate) => candidate.type === "mcp_url")
+  ?? candidates[0];
+
+const generatePackage = async (input) => {
+  const packageId = packageIdFromInput(input);
+  assertPackageId(packageId);
+
+  const existed = await profileExists(packageId);
+  if (!existed) {
+    const parsed = maybeUrl(input);
+    const docsUrl = parsed?.toString() ?? maybeUrl(`https://${input}`)?.toString() ?? null;
+    await mkdir(packageDirectoryUrl(packageId), { recursive: true });
+    await writeFile(new URL("profile.yaml", packageDirectoryUrl(packageId)), draftProfileText({
+      packageId,
+      name: packageId,
+      docsUrl,
+      openapiUrl: null,
+      graphqlUrl: null,
+      apisGuru: null,
+      env: null,
+    }), { flag: "wx" });
   }
-  return replaced;
+
+  const discovery = await discoverSources(packageId);
+  const candidate = preferredSourceCandidate(discovery.candidates);
+  const applied = candidate && ["apis_guru", "openapi_url", "openapi_urls", "mcp_url"].includes(candidate.type);
+  if (applied) {
+    await applyCandidateToProfile(packageId, candidate);
+  }
+
+  const validation = await validateProfile(packageId);
+  let auth = null;
+  if (validation.status === "ok" || validation.status === "unsupported") {
+    auth = await authPlan(packageId);
+  }
+
+  return {
+    input,
+    package: packageId,
+    status: validation.status === "ok" && auth?.status === "ready" ? "ready" : validation.status === "ok" ? "needs_auth_detail" : validation.status,
+    created: !existed,
+    profile: `pkgs/${packageId}/profile.yaml`,
+    selected_source: candidate ? {
+      id: candidate.id,
+      type: candidate.type,
+      confidence: candidate.confidence,
+    } : null,
+    validation,
+    auth: auth ? {
+      status: auth.status,
+      mode: auth.runtime?.mode,
+      required_env: unique([
+        auth.profile_auth?.env,
+        auth.profile_auth?.usernameEnv,
+        auth.profile_auth?.passwordEnv,
+        auth.profile_auth?.refreshTokenEnv,
+        auth.profile_auth?.accessTokenEnv,
+        auth.profile_auth?.organizationIdEnv,
+      ]),
+      gaps: auth.gaps ?? [],
+    } : null,
+    commands: [
+      `api-code-mode ${packageId} ops`,
+      `api-code-mode ${packageId} describe <operation-id>`,
+      `api-code-mode ${packageId} plan-call <operation-id>`,
+    ],
+    diagnostics: "Private discovery, auth, and validation commands remain available for agents and maintainers.",
+  };
 };
 
-const applyDiscoveryCandidate = async (packageId) => {
-  assertPackageId(packageId);
-  const candidateId = parseFlag("--candidate", null);
-  if (!candidateId) {
-    throw new Error("discover-apply requires --candidate <id>");
+const replaceSourcesBlock = (profileText, lines) => {
+  const block = `${lines.join("\n")}\n`;
+  const sourcesBlock = /^sources:\n(?:  .+\n|    - .+\n)+/m;
+  if (!sourcesBlock.test(profileText)) {
+    throw new Error("Could not replace sources block in profile.yaml");
   }
+  return profileText.replace(sourcesBlock, block);
+};
 
+const applyCandidateToProfile = async (packageId, candidate) => {
   const profile = await readProfile(packageId);
-  const discovery = await discoverSources(packageId);
-  const candidate = discovery.candidates.find((item) => item.id === candidateId);
-  if (!candidate) {
-    throw new Error(`Discovery candidate not found: ${candidateId}`);
-  }
-
   const sourceLines = [
     "sources:",
     profile.docsUrl ? `  docs_url: ${profile.docsUrl}` : null,
@@ -556,6 +672,22 @@ const applyDiscoveryCandidate = async (packageId) => {
 
   const nextProfile = replaceSourcesBlock(profile.text, sourceLines);
   await writeFile(new URL("profile.yaml", packageDirectoryUrl(packageId)), nextProfile);
+};
+
+const applyDiscoveryCandidate = async (packageId) => {
+  assertPackageId(packageId);
+  const candidateId = parseFlag("--candidate", null);
+  if (!candidateId) {
+    throw new Error("discover-apply requires --candidate <id>");
+  }
+
+  const discovery = await discoverSources(packageId);
+  const candidate = discovery.candidates.find((item) => item.id === candidateId);
+  if (!candidate) {
+    throw new Error(`Discovery candidate not found: ${candidateId}`);
+  }
+
+  await applyCandidateToProfile(packageId, candidate);
   return {
     package: packageId,
     applied: candidate.id,
@@ -1050,12 +1182,38 @@ const bootstrapAgent = async (packageId) => {
   };
 };
 
+const packageCommand = async (packageId, subcommand, args) => {
+  if (!(await profileExists(packageId))) {
+    return null;
+  }
+  if (!subcommand || subcommand === "ops") {
+    return searchOperations(packageOperations(await fetchPackageSpecs(packageId)), args.join(" "));
+  }
+  if (subcommand === "describe") {
+    return describeOperation(await fetchPackageSpecs(packageId), args.join(" "));
+  }
+  if (subcommand === "plan-call") {
+    return requestPlan(await fetchPackageSpecs(packageId), args.join(" "));
+  }
+  throw new Error(`Unknown package command: ${packageId} ${subcommand}`);
+};
+
 const main = async () => {
   const packageOptionalCommands = new Set(["gaps", "validate"]);
-  if (!command || (!packageOptionalCommands.has(command) && !packageIdOrQuery)) {
-    throw new Error("Usage: npm run search -- <query> | npm run ops -- <package> | npm run describe -- <package> <operationId>");
+  if (!command || command === "help" || command === "--help" || command === "-h") {
+    return publicHelp();
+  }
+  if (!packageOptionalCommands.has(command) && !packageIdOrQuery) {
+    const scoped = await packageCommand(command, "ops", []);
+    if (scoped) {
+      return scoped;
+    }
+    throw new Error("Usage: api-code-mode generate <domain-or-url> | api-code-mode <package> ops [query]");
   }
 
+  if (command === "generate") {
+    return generatePackage(packageIdOrQuery);
+  }
   if (command === "bootstrap-prompt") {
     return bootstrapPrompt(packageIdOrQuery);
   }
@@ -1093,6 +1251,10 @@ const main = async () => {
   if (command === "validate") {
     const ids = packageIdOrQuery ? [packageIdOrQuery] : await packageIds();
     return Promise.all(ids.map(validateProfile));
+  }
+  const scoped = await packageCommand(command, packageIdOrQuery, restArgs);
+  if (scoped) {
+    return scoped;
   }
   throw new Error(`Unknown command: ${command}`);
 };

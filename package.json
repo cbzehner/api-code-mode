@@ -3,6 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "generate": "node src/cli.mjs generate",
+    "help": "node src/cli.mjs help",
     "bootstrap-agent": "node src/cli.mjs bootstrap-agent",
     "bootstrap-new": "node src/cli.mjs bootstrap-new",
     "bootstrap-prompt": "node src/cli.mjs bootstrap-prompt",
