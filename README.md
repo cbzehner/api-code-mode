@@ -28,6 +28,7 @@ progressive discovery loop.
 ## Spike Commands
 
 ```bash
+npm run bootstrap-prompt -- cable
 npm run search -- github
 npm run ops -- github
 npm run ops -- stripe customer
@@ -37,6 +38,22 @@ npm run validate
 npm run gaps
 npm run smoke
 ```
+
+## Self-Healing Profiles
+
+Profiles that fail validation should produce a repair prompt:
+
+```bash
+npm run bootstrap-prompt -- cable
+npm run bootstrap-prompt -- linear
+```
+
+The prompt is meant for an agent runner. It scopes the repair to one package,
+asks the agent to find official machine-readable sources, and requires
+`npm run validate -- <package>` before reporting back. Direct agent execution is
+deliberately deferred until the runner contract is explicit.
+
+See `docs/self-healing.md` for the target `bootstrap-agent` flow.
 
 ## Validation Set
 

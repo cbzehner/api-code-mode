@@ -6,6 +6,7 @@ Rust.
 ## Commands
 
 ```bash
+api-code-mode bootstrap-prompt <package>
 api-code-mode search <query>
 api-code-mode ops <package> [query]
 api-code-mode describe <package> <operation-id>
@@ -43,3 +44,16 @@ Only `apis_guru` and `openapi_url` are executable today. `graphql_url` and
 - `unsupported`: source type is known but not implemented.
 - `missing_source`: profile has no supported machine-readable source.
 - `failed`: source exists but resolution failed.
+
+## Self-Healing Bootstrap
+
+`bootstrap-prompt <package>` emits a constrained agent task for repairing a
+profile. The task must keep edits scoped to `pkgs/<id>/`, avoid secrets, prefer
+official machine-readable sources, and rerun validation.
+
+Future runtimes may add `bootstrap-agent <package> --agent <runner>`, but the
+safe contract starts with prompt generation. Agent execution must be explicit
+and configurable.
+
+The runner must report `repaired`, `adapter_needed`, `source_missing`, or
+`failed`.

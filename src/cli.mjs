@@ -31,10 +31,12 @@ const readProfile = async (packageId) => {
   const text = await readFile(new URL(`../pkgs/${packageId}/profile.yaml`, import.meta.url), "utf8");
   return {
     id: packageId,
+    name: text.match(/^name:\s*(.+)$/m)?.[1]?.trim(),
     apisGuru: text.match(/apis_guru:\s*(.+)/)?.[1]?.trim(),
     openapiUrl: text.match(/openapi_url:\s*(.+)/)?.[1]?.trim(),
     graphqlUrl: text.match(/graphql_url:\s*(.+)/)?.[1]?.trim(),
     docsUrl: text.match(/docs_url:\s*(.+)/)?.[1]?.trim(),
+    text,
   };
 };
 
@@ -200,12 +202,66 @@ const validateProfile = async (packageId) => {
   }
 };
 
+const bootstrapPrompt = async (packageId) => {
+  const profile = await readProfile(packageId);
+  const validation = await validateProfile(packageId);
+  const packagePath = `pkgs/${packageId}/profile.yaml`;
+
+  const instructions = [
+    `You are repairing the api-code-mode package profile for ${profile.name ?? packageId}.`,
+    "",
+    "Goal:",
+    "- Make this package machine-readable and usable by the api-code-mode runtime without adding bespoke runtime code unless the source type requires it.",
+    "",
+    "Current validation result:",
+    JSON.stringify(validation, null, 2),
+    "",
+    "Current profile:",
+    "```yaml",
+    profile.text.trim(),
+    "```",
+    "",
+    "Allowed edits:",
+    `- Edit ${packagePath}.`,
+    `- Add notes under pkgs/${packageId}/ if needed, such as BOOTSTRAP.md.`,
+    "- Do not edit unrelated packages.",
+    "- Do not add credentials, tokens, or secret item identifiers.",
+    "",
+    "Bootstrap steps:",
+    "- Search the public web for official API docs, machine-readable OpenAPI/Swagger specs, Postman collections, GraphQL schemas, SDK metadata, or well-known spec URLs.",
+    "- Prefer official provider sources over third-party mirrors.",
+    "- If an OpenAPI spec exists, add `sources.openapi_url` or `sources.apis_guru`.",
+    "- If only GraphQL exists, keep `sources.graphql_url` and document that a GraphQL adapter is required.",
+    "- If only human docs exist, keep `sources.docs_url`, add notes explaining what was found, and leave validation as a known gap.",
+    "- Classify auth minimally using env var names only.",
+    "- Preserve `policy.default_write: confirm` unless official docs prove a safer default.",
+    "",
+    "Verification:",
+    `- Run \`npm run validate -- ${packageId}\`.`,
+    "- If validation cannot pass because runtime support is missing, explain the missing adapter precisely.",
+    "- Summarize the source URLs used and the remaining gap.",
+  ].join("\n");
+
+  return {
+    package: packageId,
+    status: validation.status,
+    source: validation.source,
+    prompt: instructions,
+    suggested_agent_commands: [
+      `gemini -p "$(npm run bootstrap-prompt -- ${packageId} | node -e 'let s=\"\"; process.stdin.on(\"data\", d => s += d); process.stdin.on(\"end\", () => console.log(JSON.parse(s).prompt))')" --model gemini-3.1-pro-preview --skip-trust --approval-mode plan`,
+    ],
+  };
+};
+
 const main = async () => {
   const packageOptionalCommands = new Set(["gaps", "validate"]);
   if (!command || (!packageOptionalCommands.has(command) && !packageIdOrQuery)) {
     throw new Error("Usage: npm run search -- <query> | npm run ops -- <package> | npm run describe -- <package> <operationId>");
   }
 
+  if (command === "bootstrap-prompt") {
+    return bootstrapPrompt(packageIdOrQuery);
+  }
   if (command === "search") {
     return searchApis(packageIdOrQuery);
   }
