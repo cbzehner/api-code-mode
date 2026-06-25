@@ -1,6 +1,7 @@
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
+import { lookup } from "node:dns/promises";
 
 const API_INDEX_URL = "https://api.apis.guru/v2/list.json";
 
@@ -245,6 +246,29 @@ const commonSubdomainOrigins = (origin) => {
   return ["docs", "api", "developer", "developers"].map((subdomain) => `${parsed.protocol}//${subdomain}.${domain}`);
 };
 
+const hostResolves = async (hostname) => {
+  try {
+    await Promise.race([
+      lookup(hostname),
+      new Promise((_, reject) => setTimeout(() => reject(new Error("dns timeout")), 3000)),
+    ]);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+const resolvableOrigins = async (origins) => {
+  const checks = await Promise.all(origins.map(async (origin) => {
+    const parsed = maybeUrl(origin);
+    if (!parsed) {
+      return null;
+    }
+    return await hostResolves(parsed.hostname) ? origin : null;
+  }));
+  return unique(checks);
+};
+
 const discoverLinkedOrigins = async (origins) => {
   const linkedOrigins = [];
   for (const origin of origins) {
@@ -399,10 +423,11 @@ const discoverSources = async (input) => {
 
   const directRootUrls = unique(context.urls.map((value) => maybeUrl(value)?.origin).filter(Boolean));
   const linkedRootUrls = await discoverLinkedOrigins(directRootUrls);
+  const subdomainRootUrls = await resolvableOrigins(directRootUrls.flatMap(commonSubdomainOrigins));
   const rootUrls = unique([
     ...directRootUrls,
     ...linkedRootUrls,
-    ...directRootUrls.flatMap(commonSubdomainOrigins),
+    ...subdomainRootUrls,
   ]);
   const probeUrls = unique([
     ...context.urls.filter(looksLikeSpecUrl),
