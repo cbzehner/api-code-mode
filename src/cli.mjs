@@ -1670,6 +1670,56 @@ const parseParamValues = (args) =>
     return [entry.slice(0, separator), entry.slice(separator + 1)];
   }));
 
+const errorPayload = (error) => {
+  const message = error.message ?? String(error);
+  const missingEnv = message.match(/^Missing required env vars: (.+)$/);
+  if (missingEnv) {
+    const env = missingEnv[1].split(",").map((name) => name.trim()).filter(Boolean);
+    return {
+      status: "error",
+      code: "missing_env",
+      message,
+      missing_env: env,
+      next_actions: env.map((name) => `Set ${name} in the environment and retry the command.`),
+    };
+  }
+
+  const missingParameters = message.match(/^Missing required parameters: (.+)$/);
+  if (missingParameters) {
+    return {
+      status: "error",
+      code: "missing_parameters",
+      message,
+      missing_parameters: missingParameters[1].split(",").map((name) => name.trim()).filter(Boolean),
+      next_actions: ["Pass each missing value with --param name=value."],
+    };
+  }
+
+  if (message.startsWith("Only read-only")) {
+    return {
+      status: "error",
+      code: "write_call_blocked",
+      message,
+      next_actions: ["Use describe to inspect the operation; the spike runtime only executes read-only calls."],
+    };
+  }
+
+  if (message.startsWith("Unknown command") || message.startsWith("Unknown package command") || message.startsWith("Usage:")) {
+    return {
+      status: "error",
+      code: "usage",
+      message,
+      next_actions: ["Run api-code-mode help for public commands."],
+    };
+  }
+
+  return {
+    status: "error",
+    code: "runtime_error",
+    message,
+  };
+};
+
 const runProcess = async (executable, args, timeoutMs) =>
   new Promise((resolve) => {
     const child = spawn(executable, args, { detached: true, shell: false });
@@ -1883,6 +1933,6 @@ const main = async () => {
 main()
   .then((result) => console.log(JSON.stringify(result, null, 2)))
   .catch((error) => {
-    console.error(error.message);
+    console.error(JSON.stringify(errorPayload(error), null, 2));
     process.exit(1);
   });

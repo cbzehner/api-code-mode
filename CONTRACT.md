@@ -42,9 +42,29 @@ api-code-mode gaps
 
 ## Output
 
-Commands print JSON to stdout. Errors print one plain message to stderr and exit
-non-zero. The Rust runtime can add TOON later, but JSON is the compatibility
-contract for now.
+Commands print JSON to stdout. Errors print JSON to stderr and exit non-zero.
+The Rust runtime can add TOON later, but JSON is the compatibility contract for
+now.
+
+Error objects use this shape:
+
+```json
+{
+  "status": "error",
+  "code": "missing_env",
+  "message": "Missing required env vars: PROVIDER_TOKEN",
+  "missing_env": ["PROVIDER_TOKEN"],
+  "next_actions": ["Set PROVIDER_TOKEN in the environment and retry the command."]
+}
+```
+
+Known error codes:
+
+- `missing_env`: a configured auth env var is required before the request can run.
+- `missing_parameters`: the operation needs additional `--param name=value` inputs.
+- `write_call_blocked`: the spike runtime refused to execute a write or destructive call.
+- `usage`: the command shape is invalid or unknown.
+- `runtime_error`: fallback for unexpected failures.
 
 ## Packages
 

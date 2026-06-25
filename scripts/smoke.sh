@@ -76,9 +76,9 @@ const countriesCall = JSON.parse(fs.readFileSync("/tmp/api-code-mode-countries-c
 const weatherbitCallDryRun = JSON.parse(fs.readFileSync("/tmp/api-code-mode-weatherbit-call-dry-run.json", "utf8"));
 const weatherbitCallExplicitKey = JSON.parse(fs.readFileSync("/tmp/api-code-mode-weatherbit-call-explicit-key.json", "utf8"));
 const twilioCallDryRun = JSON.parse(fs.readFileSync("/tmp/api-code-mode-twilio-call-dry-run.json", "utf8"));
-const githubCallWriteError = fs.readFileSync("/tmp/api-code-mode-github-call-write.err", "utf8");
-const weatherbitMissingKeyError = fs.readFileSync("/tmp/api-code-mode-weatherbit-call-missing-key.err", "utf8");
-const linearMissingKeyError = fs.readFileSync("/tmp/api-code-mode-linear-call-missing-key.err", "utf8");
+const githubCallWriteError = JSON.parse(fs.readFileSync("/tmp/api-code-mode-github-call-write.err", "utf8"));
+const weatherbitMissingKeyError = JSON.parse(fs.readFileSync("/tmp/api-code-mode-weatherbit-call-missing-key.err", "utf8"));
+const linearMissingKeyError = JSON.parse(fs.readFileSync("/tmp/api-code-mode-linear-call-missing-key.err", "utf8"));
 
 if (!help.commands.some((command) => command.command === "generate <domain-or-url>")) {
   throw new Error("expected public help to include generate");
@@ -118,13 +118,13 @@ if (!twilioCallDryRun.request.headers.includes("Authorization")) {
 if (JSON.stringify(twilioCallDryRun).includes("secret")) {
   throw new Error("expected Twilio dry-run output to omit secret values");
 }
-if (!githubCallWriteError.includes("Only read-only GET operations")) {
+if (githubCallWriteError.code !== "write_call_blocked") {
   throw new Error("expected write call to fail before network request");
 }
-if (!weatherbitMissingKeyError.includes("Missing required env vars: WEATHERBIT_API_KEY")) {
+if (weatherbitMissingKeyError.code !== "missing_env" || !weatherbitMissingKeyError.missing_env.includes("WEATHERBIT_API_KEY")) {
   throw new Error("expected Weatherbit call to fail before request without API key");
 }
-if (!linearMissingKeyError.includes("Missing required env vars: LINEAR_API_KEY")) {
+if (linearMissingKeyError.code !== "missing_env" || !linearMissingKeyError.missing_env.includes("LINEAR_API_KEY")) {
   throw new Error("expected Linear GraphQL call to fail before request without API key");
 }
 if (validate.filter((result) => result.status === "ok").length !== 16) {

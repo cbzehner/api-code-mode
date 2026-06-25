@@ -45,6 +45,10 @@ operations fail before making a network request. When a read call needs auth,
 the runner injects credentials from the package profile's env vars and fails
 before the request if a required env var is missing.
 
+Successful commands print JSON to stdout. Failed commands print JSON to stderr
+with a stable `code` such as `missing_env`, `missing_parameters`, or
+`write_call_blocked`, so agents can recover without parsing prose.
+
 `generate` is the user-facing orchestration command. It derives a package id
 from the domain, discovers sources, writes or updates `pkgs/<id>/profile.yaml`,
 validates the package, and returns the next package-scoped commands.
