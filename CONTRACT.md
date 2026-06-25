@@ -7,6 +7,7 @@ Rust.
 
 ```bash
 api-code-mode bootstrap-prompt <package>
+api-code-mode bootstrap-agent <package> --runner gemini [--timeout-ms 120000]
 api-code-mode search <query>
 api-code-mode ops <package> [query]
 api-code-mode describe <package> <operation-id>
@@ -51,9 +52,10 @@ Only `apis_guru` and `openapi_url` are executable today. `graphql_url` and
 profile. The task must keep edits scoped to `pkgs/<id>/`, avoid secrets, prefer
 official machine-readable sources, and rerun validation.
 
-Future runtimes may add `bootstrap-agent <package> --agent <runner>`, but the
-safe contract starts with prompt generation. Agent execution must be explicit
-and configurable.
+`bootstrap-agent <package> --runner gemini` invokes the generated prompt in
+read-only runner mode. It must not edit files directly in the spike runtime.
+Future implementations may add patch application, but only after patch review
+and validation are explicit.
 
 The runner must report `repaired`, `adapter_needed`, `source_missing`, or
 `failed`.

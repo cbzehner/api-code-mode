@@ -23,7 +23,10 @@ api-code-mode bootstrap-agent cable --runner gemini
 api-code-mode validate cable
 ```
 
-The agent runner should:
+The current spike runner invokes Gemini in read-only mode and returns findings.
+Timeouts return `status: "timeout"` and `exit_code: 124` so callers can retry
+or switch runners without parsing stderr.
+The later mutating runner should:
 
 1. Generate the same prompt as `bootstrap-prompt`.
 2. Invoke an explicit configured runner, such as Gemini, Codex, or Claude.

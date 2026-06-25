@@ -29,6 +29,7 @@ progressive discovery loop.
 
 ```bash
 npm run bootstrap-prompt -- cable
+npm run bootstrap-agent -- cable --runner gemini --timeout-ms 120000
 npm run search -- github
 npm run ops -- github
 npm run ops -- stripe customer
@@ -46,12 +47,14 @@ Profiles that fail validation should produce a repair prompt:
 ```bash
 npm run bootstrap-prompt -- cable
 npm run bootstrap-prompt -- linear
+npm run bootstrap-agent -- cable --runner gemini --timeout-ms 120000
 ```
 
 The prompt is meant for an agent runner. It scopes the repair to one package,
 asks the agent to find official machine-readable sources, and requires
-`npm run validate -- <package>` before reporting back. Direct agent execution is
-deliberately deferred until the runner contract is explicit.
+`npm run validate -- <package>` before reporting back. The current
+`bootstrap-agent` command invokes Gemini in read-only mode and captures findings;
+it does not apply edits.
 
 See `docs/self-healing.md` for the target `bootstrap-agent` flow.
 

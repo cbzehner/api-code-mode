@@ -1,4 +1,5 @@
 import { readdir, readFile } from "node:fs/promises";
+import { spawn } from "node:child_process";
 
 const API_INDEX_URL = "https://api.apis.guru/v2/list.json";
 
@@ -253,6 +254,119 @@ const bootstrapPrompt = async (packageId) => {
   };
 };
 
+const parseFlag = (flagName, defaultValue) => {
+  const index = restArgs.indexOf(flagName);
+  return index === -1 ? defaultValue : restArgs[index + 1];
+};
+
+const runProcess = async (executable, args, timeoutMs) =>
+  new Promise((resolve) => {
+    const child = spawn(executable, args, { detached: true, shell: false });
+    let stdout = "";
+    let stderr = "";
+    let timedOut = false;
+    let settled = false;
+
+    const finish = (result) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timeout);
+      clearTimeout(killTimeout);
+      resolve(result);
+    };
+
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      try {
+        process.kill(-child.pid, "SIGTERM");
+      } catch {
+        child.kill("SIGTERM");
+      }
+    }, timeoutMs);
+
+    const killTimeout = setTimeout(() => {
+      if (!timedOut) {
+        return;
+      }
+      try {
+        process.kill(-child.pid, "SIGKILL");
+      } catch {
+        child.kill("SIGKILL");
+      }
+      finish({ code: 124, stdout, stderr, timedOut });
+    }, timeoutMs + 3000);
+
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk;
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk;
+    });
+    child.on("error", (error) => {
+      finish({ code: 1, stdout, stderr: error.message, timedOut });
+    });
+    child.on("close", (code) => {
+      finish({ code, stdout, stderr, timedOut });
+    });
+  });
+
+const parseGeminiOutput = (stdout) => {
+  try {
+    const parsed = JSON.parse(stdout);
+    return parsed.response ?? parsed;
+  } catch {
+    return stdout.trim();
+  }
+};
+
+const bootstrapAgent = async (packageId) => {
+  const runner = parseFlag("--runner", "gemini");
+  const timeoutMs = Number.parseInt(parseFlag("--timeout-ms", "120000"), 10);
+  if (runner !== "gemini") {
+    return {
+      package: packageId,
+      runner,
+      status: "failed",
+      error: "Only the gemini runner is implemented in the spike runtime.",
+    };
+  }
+
+  const prompt = await bootstrapPrompt(packageId);
+  const agentPrompt = [
+    prompt.prompt,
+    "",
+    "Runner mode:",
+    "- Do not edit files.",
+    "- Return concise findings with one final status: repaired, adapter_needed, source_missing, or failed.",
+    "- Include exact official source URLs if found.",
+    "- Include the minimal profile.yaml changes you recommend, if any.",
+  ].join("\n");
+
+  const result = await runProcess("gemini", [
+    "-p",
+    agentPrompt,
+    "--model",
+    "gemini-3.1-pro-preview",
+    "--skip-trust",
+    "--approval-mode",
+    "plan",
+    "-o",
+    "json",
+  ], timeoutMs);
+
+  return {
+    package: packageId,
+    runner,
+    status: result.timedOut ? "timeout" : result.code === 0 ? "agent_completed" : "failed",
+    exit_code: result.timedOut ? 124 : result.code,
+    timed_out: result.timedOut,
+    output: parseGeminiOutput(result.stdout),
+    stderr: result.stderr.trim(),
+  };
+};
+
 const main = async () => {
   const packageOptionalCommands = new Set(["gaps", "validate"]);
   if (!command || (!packageOptionalCommands.has(command) && !packageIdOrQuery)) {
@@ -261,6 +375,9 @@ const main = async () => {
 
   if (command === "bootstrap-prompt") {
     return bootstrapPrompt(packageIdOrQuery);
+  }
+  if (command === "bootstrap-agent") {
+    return bootstrapAgent(packageIdOrQuery);
   }
   if (command === "search") {
     return searchApis(packageIdOrQuery);
