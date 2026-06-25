@@ -34,8 +34,18 @@ node src/cli.mjs github call github-v3-rest-api:meta/root >/tmp/api-code-mode-gi
 node src/cli.mjs countries ops >/tmp/api-code-mode-countries-ops.json
 node src/cli.mjs countries describe query:countries >/tmp/api-code-mode-countries-describe.json
 node src/cli.mjs countries call query:countries --select code --select name >/tmp/api-code-mode-countries-call.json
+WEATHERBIT_API_KEY=test-key node src/cli.mjs weatherbit call 'weatherbit-interactive-swagger-ui-documentation:GET /alerts?lat={lat}&lon={lon}' --param lat=1 --param lon=1 --dry-run >/tmp/api-code-mode-weatherbit-call-dry-run.json
+TWILIO_ACCOUNT_SID=AC123 TWILIO_AUTH_TOKEN=secret node src/cli.mjs twilio call twilio-api:ListAccount --dry-run >/tmp/api-code-mode-twilio-call-dry-run.json
 if node src/cli.mjs github call github-v3-rest-api:activity/mark-notifications-as-read >/tmp/api-code-mode-github-call-write.json 2>/tmp/api-code-mode-github-call-write.err; then
   echo "expected write call to fail" >&2
+  exit 1
+fi
+if node src/cli.mjs weatherbit call 'weatherbit-interactive-swagger-ui-documentation:GET /alerts?lat={lat}&lon={lon}' --param lat=1 --param lon=1 --dry-run >/tmp/api-code-mode-weatherbit-call-missing-key.json 2>/tmp/api-code-mode-weatherbit-call-missing-key.err; then
+  echo "expected weatherbit call without key to fail" >&2
+  exit 1
+fi
+if node src/cli.mjs linear call query:applicationInfo >/tmp/api-code-mode-linear-call-missing-key.json 2>/tmp/api-code-mode-linear-call-missing-key.err; then
+  echo "expected linear call without key to fail" >&2
   exit 1
 fi
 
@@ -62,7 +72,11 @@ const githubCallRoot = JSON.parse(fs.readFileSync("/tmp/api-code-mode-github-cal
 const countriesOps = JSON.parse(fs.readFileSync("/tmp/api-code-mode-countries-ops.json", "utf8"));
 const countriesDescribe = JSON.parse(fs.readFileSync("/tmp/api-code-mode-countries-describe.json", "utf8"));
 const countriesCall = JSON.parse(fs.readFileSync("/tmp/api-code-mode-countries-call.json", "utf8"));
+const weatherbitCallDryRun = JSON.parse(fs.readFileSync("/tmp/api-code-mode-weatherbit-call-dry-run.json", "utf8"));
+const twilioCallDryRun = JSON.parse(fs.readFileSync("/tmp/api-code-mode-twilio-call-dry-run.json", "utf8"));
 const githubCallWriteError = fs.readFileSync("/tmp/api-code-mode-github-call-write.err", "utf8");
+const weatherbitMissingKeyError = fs.readFileSync("/tmp/api-code-mode-weatherbit-call-missing-key.err", "utf8");
+const linearMissingKeyError = fs.readFileSync("/tmp/api-code-mode-linear-call-missing-key.err", "utf8");
 
 if (!help.commands.some((command) => command.command === "generate <domain-or-url>")) {
   throw new Error("expected public help to include generate");
@@ -90,8 +104,23 @@ if (countriesDescribe.safety !== "read" || !countriesDescribe.return_type) {
 if (countriesCall.status !== "ok" || !Array.isArray(countriesCall.response.json?.data?.countries)) {
   throw new Error("expected Countries GraphQL call to return countries data");
 }
+if (!weatherbitCallDryRun.request.url.includes("key=%5Bredacted%5D") || weatherbitCallDryRun.request.url.includes("test-key")) {
+  throw new Error("expected Weatherbit API key to be injected and redacted");
+}
+if (!twilioCallDryRun.request.headers.includes("Authorization")) {
+  throw new Error("expected Twilio basic auth to inject Authorization header");
+}
+if (JSON.stringify(twilioCallDryRun).includes("secret")) {
+  throw new Error("expected Twilio dry-run output to omit secret values");
+}
 if (!githubCallWriteError.includes("Only read-only GET operations")) {
   throw new Error("expected write call to fail before network request");
+}
+if (!weatherbitMissingKeyError.includes("Missing required env vars: WEATHERBIT_API_KEY")) {
+  throw new Error("expected Weatherbit call to fail before request without API key");
+}
+if (!linearMissingKeyError.includes("Missing required env vars: LINEAR_API_KEY")) {
+  throw new Error("expected Linear GraphQL call to fail before request without API key");
 }
 if (validate.filter((result) => result.status === "ok").length !== 16) {
   throw new Error("expected 16 package profiles to validate");

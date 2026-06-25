@@ -284,8 +284,35 @@ query ApiCodeModeType($name: String!) {
 }
 `;
 
-const graphqlAuthHeaders = (profile) => {
-  if (profile.auth.type !== "bearer" || !profile.auth.env || !process.env[profile.auth.env]) {
+const templateEnvNames = (template) =>
+  unique([...template.matchAll(/\$\{([A-Z0-9_]+)\}/g)].map((match) => match[1]));
+
+const renderValueTemplate = (template) => {
+  const missing = templateEnvNames(template).filter((name) => process.env[name] === undefined);
+  if (missing.length > 0) {
+    throw new Error(`Missing required env vars: ${missing.join(", ")}`);
+  }
+
+  const basic = template.match(/^Basic base64\((.*)\)$/);
+  if (basic) {
+    const value = basic[1].replace(/\$\{([A-Z0-9_]+)\}/g, (_, name) => process.env[name]);
+    return `Basic ${Buffer.from(value).toString("base64")}`;
+  }
+
+  return template.replace(/\$\{([A-Z0-9_]+)\}/g, (_, name) => process.env[name]);
+};
+
+const graphqlAuthHeaders = (profile, { requireConfigured = false } = {}) => {
+  if (!["bearer", "oauth2"].includes(profile.auth.type)) {
+    return {};
+  }
+  if (!profile.auth.env) {
+    return {};
+  }
+  if (!process.env[profile.auth.env]) {
+    if (requireConfigured) {
+      throw new Error(`Missing required env vars: ${profile.auth.env}`);
+    }
     return {};
   }
   return { Authorization: `${profile.auth.scheme ?? "Bearer"} ${process.env[profile.auth.env]}` };
@@ -1222,7 +1249,15 @@ const authPlan = async (packageId) => {
   };
 };
 
-const serverUrl = (spec) => spec.servers?.[0]?.url ?? "";
+const serverUrl = (spec) => {
+  if (spec.servers?.[0]?.url) {
+    return spec.servers[0].url;
+  }
+  if (spec.host) {
+    return `${spec.schemes?.includes("https") ? "https" : spec.schemes?.[0] ?? "https"}://${spec.host}${spec.basePath ?? ""}`;
+  }
+  return "";
+};
 
 const joinUrlTemplate = (baseUrl, path) => `${baseUrl.replace(/\/+$/, "")}/${path.replace(/^\/+/, "")}`;
 
@@ -1286,6 +1321,63 @@ const responsePreview = async (response) => {
   return { text: text.slice(0, 2000), truncated: text.length > 2000 };
 };
 
+const authInjectionKey = (injection) => `${injection.in}:${injection.name}`.toLowerCase();
+
+const operationSecurityRequired = (security) =>
+  Array.isArray(security) && security.some((entry) => entry && Object.keys(entry).length > 0);
+
+const operationAuthInjections = async (packageId, plan) => {
+  const auth = await authPlan(packageId);
+  if (auth.status !== "ready") {
+    throw new Error(`Auth is not ready for ${packageId}: ${(auth.gaps ?? []).join("; ")}`);
+  }
+
+  const operationParameterKeys = new Set([
+    ...plan.query_parameters.map((parameter) => `query:${parameter.name}`.toLowerCase()),
+    ...plan.header_parameters.map((parameter) => `header:${parameter.name}`.toLowerCase()),
+  ]);
+  const parameterInjections = (auth.runtime?.parameter_injections ?? [])
+    .filter((injection) => operationParameterKeys.has(authInjectionKey(injection)));
+  const defaultInjection = auth.runtime?.default_injection;
+  const needsDefaultInjection = defaultInjection && operationSecurityRequired(plan.security);
+  const tokenExchangeInjection = auth.runtime?.token_exchange?.access_token_env ? {
+    in: "header",
+    name: "Authorization",
+    value_template: `${auth.profile_auth.scheme ?? "Bearer"} \${${auth.runtime.token_exchange.access_token_env}}`,
+  } : null;
+
+  return unique([
+    ...parameterInjections,
+    needsDefaultInjection ? defaultInjection : null,
+    operationSecurityRequired(plan.security) && !defaultInjection ? tokenExchangeInjection : null,
+  ]);
+};
+
+const applyAuthInjections = (url, headers, injections, explicitParameters) => {
+  for (const injection of injections) {
+    if (explicitParameters[injection.name] !== undefined) {
+      continue;
+    }
+    const value = renderValueTemplate(injection.value_template);
+    if (injection.in === "query" && !url.searchParams.has(injection.name)) {
+      url.searchParams.set(injection.name, value);
+    }
+    if (injection.in === "header" && headers[injection.name] === undefined) {
+      headers[injection.name] = value;
+    }
+  }
+};
+
+const redactedUrl = (url, secretQueryNames) => {
+  const copy = new URL(url.toString());
+  for (const name of secretQueryNames) {
+    if (copy.searchParams.has(name)) {
+      copy.searchParams.set(name, "[redacted]");
+    }
+  }
+  return copy.toString();
+};
+
 const callOperation = async (packageId, id, args) => {
   const parameters = parseParamValues(args);
   const dryRun = args.includes("--dry-run");
@@ -1294,9 +1386,13 @@ const callOperation = async (packageId, id, args) => {
     throw new Error("Only read-only GET operations can be called by the spike runtime.");
   }
 
+  const authInjections = await operationAuthInjections(packageId, plan);
+  const injectedParameters = new Set(authInjections.map((injection) => authInjectionKey(injection)));
   const missingPath = plan.path_parameters.filter((parameter) => parameter.required && parameters[parameter.name] === undefined);
-  const missingQuery = plan.query_parameters.filter((parameter) => parameter.required && parameters[parameter.name] === undefined);
-  const missingHeaders = plan.header_parameters.filter((parameter) => parameter.required && parameters[parameter.name] === undefined);
+  const missingQuery = plan.query_parameters
+    .filter((parameter) => parameter.required && parameters[parameter.name] === undefined && !injectedParameters.has(`query:${parameter.name}`.toLowerCase()));
+  const missingHeaders = plan.header_parameters
+    .filter((parameter) => parameter.required && parameters[parameter.name] === undefined && !injectedParameters.has(`header:${parameter.name}`.toLowerCase()));
   const missing = [...missingPath, ...missingQuery, ...missingHeaders].map((parameter) => parameter.name);
   if (missing.length > 0) {
     throw new Error(`Missing required parameters: ${missing.join(", ")}`);
@@ -1315,10 +1411,14 @@ const callOperation = async (packageId, id, args) => {
       headers[parameter.name] = parameters[parameter.name];
     }
   }
+  applyAuthInjections(url, headers, authInjections, parameters);
+  const secretQueryNames = authInjections
+    .filter((injection) => injection.in === "query" && parameters[injection.name] === undefined)
+    .map((injection) => injection.name);
 
   const request = {
     method: plan.method,
-    url: url.toString(),
+    url: redactedUrl(url, secretQueryNames),
     headers: Object.keys(headers).sort(),
     safety: plan.safety,
   };
@@ -1405,7 +1505,7 @@ const callGraphqlOperation = async (packageId, id, args) => {
     };
   }
 
-  const { response, json, text } = await graphqlRequest(profile.graphqlUrl, { query, variables: parameters }, graphqlAuthHeaders(profile));
+  const { response, json, text } = await graphqlRequest(profile.graphqlUrl, { query, variables: parameters }, graphqlAuthHeaders(profile, { requireConfigured: true }));
   return {
     package: packageId,
     operation: operation.qualified_id,

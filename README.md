@@ -41,7 +41,9 @@ node src/cli.mjs github call github-v3-rest-api:meta/root
 ```
 
 `call` currently executes only read-only GET operations. Write and destructive
-operations fail before making a network request.
+operations fail before making a network request. When a read call needs auth,
+the runner injects credentials from the package profile's env vars and fails
+before the request if a required env var is missing.
 
 `generate` is the user-facing orchestration command. It derives a package id
 from the domain, discovers sources, writes or updates `pkgs/<id>/profile.yaml`,
@@ -97,6 +99,9 @@ auth-looking operation parameters into one JSON runtime plan. Standard cases
 produce header/query/basic/OAuth injection templates. Weird cases stay
 declarative: Slack exposes required `token` operation parameters, and Cable
 uses a token-exchange operation before access-token calls.
+The read-only call runner consumes this plan for bearer headers, API-key query
+params, basic auth headers, and required auth-like operation parameters. Request
+metadata redacts injected query-string secrets.
 
 ## Validation Set
 
@@ -135,3 +140,9 @@ The agent pulls detail only when it needs it.
 The Node runtime is a behavior spike. Keep command output compatible with
 `CONTRACT.md`; rebuild the real CLI in Rust once the command shape and package
 profile fields stop moving.
+
+Do not hand-roll protocol/spec machinery in the rewrite. Reuse Rust ecosystem
+crates for OpenAPI parsing/generation, GraphQL introspection, HTTP, CLI parsing,
+serialization, and JSON Schema validation. Keep api-code-mode focused on the
+thin orchestration layer: source discovery, package profiles, auth policy,
+operation registry, and agent-friendly public commands.
