@@ -35,10 +35,15 @@ const publicHelp = () => ({
       description: "Inspect one operation without loading the whole API.",
       examples: ["api-code-mode cable describe api-reference:request-token"],
     },
+    {
+      command: "<package> call <operation-id> [--param name=value]",
+      description: "Run a read-only operation and return the response as structured JSON.",
+      examples: ["api-code-mode github call github-v3-rest-api:meta/root"],
+    },
   ],
   notes: [
     "Advanced diagnostic commands are available for agents and maintainers but hidden from public help.",
-    "The spike plans calls but does not execute arbitrary API calls yet.",
+    "The spike executes only read-only API calls.",
   ],
 });
 
@@ -68,6 +73,36 @@ const readText = async (url) => {
       text: "",
       url,
       error: error.name === "TimeoutError" ? "timeout" : error.message,
+    };
+  }
+};
+
+const probeGraphqlUrl = async (url) => {
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ query: "{ __typename }" }),
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    });
+    const contentType = response.headers.get("content-type") ?? "";
+    const text = await response.text();
+    const looksGraphql = /graphql/i.test(text) || /"errors"\s*:/.test(text) || /"data"\s*:/.test(text);
+    return {
+      url: response.url,
+      valid: response.status !== 404 && (looksGraphql || (contentType.includes("json") && [400, 401, 403].includes(response.status))),
+      status: response.status,
+      contentType,
+      kind: "graphql_probe",
+    };
+  } catch (error) {
+    return {
+      url,
+      valid: false,
+      status: 0,
+      contentType: "",
+      kind: error.name === "TimeoutError" ? "timeout" : "graphql_probe_failed",
+      error: error.message,
     };
   }
 };
@@ -407,7 +442,8 @@ const sourceInputs = async (input) => {
         package: input,
         name: profile.name,
         apisGuru: profile.apisGuru,
-        urls: unique([profile.docsUrl, profile.llmsUrl, profile.openapiUrl, ...profile.openapiUrls]),
+        graphqlUrl: profile.graphqlUrl,
+        urls: unique([profile.docsUrl, profile.llmsUrl, profile.openapiUrl, profile.graphqlUrl, ...profile.openapiUrls]),
       };
     } catch {
       // Fall through and treat the value as a domain/search term.
@@ -420,6 +456,7 @@ const sourceInputs = async (input) => {
     package: null,
     name: input,
     apisGuru: null,
+    graphqlUrl: null,
     urls: url ? [url.toString()] : [],
   };
 };
@@ -483,6 +520,14 @@ const discoverSources = async (input) => {
     }));
   }
 
+  if (context.graphqlUrl) {
+    pushCandidate(candidates, makeCandidate("graphql_url", {
+      confidence: "high",
+      url: context.graphqlUrl,
+      evidence: [{ source: `pkgs/${context.package}/profile.yaml`, detail: `profile already defines GraphQL endpoint ${context.graphqlUrl}` }],
+    }));
+  }
+
   const query = context.urls[0] ? maybeUrl(context.urls[0])?.hostname.replace(/^www\./, "") : context.name;
   if (query) {
     const apiMatches = await searchApis(query);
@@ -515,12 +560,28 @@ const discoverSources = async (input) => {
     ]),
   ]);
 
+  const graphqlProbeUrls = unique(rootUrls.flatMap((origin) => [
+    `${origin}/graphql`,
+    `${origin}/api/graphql`,
+  ]));
+
   for (const url of probeUrls) {
     const validation = await validateOpenApiUrl(url);
     if (validation.valid) {
       await addOpenApiCandidate([url], [{ source: url, detail: `validated ${validation.kind}` }]);
     } else if (validation.kind === "html" && validation.links.length > 0) {
       await addOpenApiCandidate(validation.links, [{ source: url, detail: "parsed OpenAPI index links from HTML" }]);
+    }
+  }
+
+  for (const url of graphqlProbeUrls) {
+    const validation = await probeGraphqlUrl(url);
+    if (validation.valid) {
+      pushCandidate(candidates, makeCandidate("graphql_url", {
+        confidence: validation.status === 200 ? "high" : "medium",
+        url: validation.url,
+        evidence: [{ source: validation.url, detail: `validated GraphQL probe with HTTP ${validation.status}` }],
+      }));
     }
   }
 
@@ -567,11 +628,19 @@ const discoverSources = async (input) => {
   };
 };
 
+const confidenceRank = (candidate) => ({ high: 3, medium: 2, low: 1 })[candidate.confidence] ?? 0;
+
+const preferredCandidateOfType = (candidates, type) =>
+  candidates
+    .filter((candidate) => candidate.type === type)
+    .sort((left, right) => confidenceRank(right) - confidenceRank(left))[0];
+
 const preferredSourceCandidate = (candidates) =>
-  candidates.find((candidate) => candidate.type === "openapi_urls")
-  ?? candidates.find((candidate) => candidate.type === "openapi_url")
-  ?? candidates.find((candidate) => candidate.type === "apis_guru")
-  ?? candidates.find((candidate) => candidate.type === "mcp_url")
+  preferredCandidateOfType(candidates, "openapi_urls")
+  ?? preferredCandidateOfType(candidates, "openapi_url")
+  ?? preferredCandidateOfType(candidates, "apis_guru")
+  ?? preferredCandidateOfType(candidates, "graphql_url")
+  ?? preferredCandidateOfType(candidates, "mcp_url")
   ?? candidates[0];
 
 const generatePackage = async (input) => {
@@ -596,7 +665,7 @@ const generatePackage = async (input) => {
 
   const discovery = await discoverSources(packageId);
   const candidate = preferredSourceCandidate(discovery.candidates);
-  const applied = candidate && ["apis_guru", "openapi_url", "openapi_urls", "mcp_url"].includes(candidate.type);
+  const applied = candidate && ["apis_guru", "openapi_url", "openapi_urls", "graphql_url", "mcp_url"].includes(candidate.type);
   if (applied) {
     await applyCandidateToProfile(packageId, candidate);
   }
@@ -632,10 +701,11 @@ const generatePackage = async (input) => {
       ]),
       gaps: auth.gaps ?? [],
     } : null,
-    commands: [
+    commands: validation.status === "ok" ? [
       `api-code-mode ${packageId} ops`,
       `api-code-mode ${packageId} describe <operation-id>`,
-    ],
+      `api-code-mode ${packageId} call <read-operation-id>`,
+    ] : [],
     diagnostics: "Private discovery, planning, auth, and validation commands remain available for agents and maintainers.",
   };
 };
@@ -657,6 +727,7 @@ const applyCandidateToProfile = async (packageId, candidate) => {
     profile.llmsUrl ? `  llms_url: ${profile.llmsUrl}` : null,
     profile.mcpUrl ? `  mcp_url: ${profile.mcpUrl}` : null,
     profile.graphqlUrl ? `  graphql_url: ${profile.graphqlUrl}` : null,
+    candidate.type === "graphql_url" && candidate.url !== profile.graphqlUrl ? `  graphql_url: ${candidate.url}` : null,
     candidate.type === "apis_guru" ? `  apis_guru: ${candidate.apis_guru}` : null,
     candidate.type === "mcp_url" && candidate.url !== profile.mcpUrl ? `  mcp_url: ${candidate.url}` : null,
     candidate.type === "openapi_url" ? `  openapi_url: ${candidate.urls[0]}` : null,
@@ -738,6 +809,8 @@ const findOperation = (specs, id) => {
   return listedOperations.find((operation) => operation.qualified_id === id) ?? listedOperations.find((operation) => operation.id === id);
 };
 
+const operationSafety = (method) => method === "GET" ? "read" : method === "DELETE" ? "destructive" : "write";
+
 const describeOperation = (specs, id) => {
   const match = findOperation(specs, id);
   if (!match) {
@@ -749,9 +822,31 @@ const describeOperation = (specs, id) => {
   return {
     ...match,
     description: operation.description,
+    safety: operationSafety(match.method),
     parameters: (operation.parameters ?? []).map((parameter) => resolveRef(spec, parameter)),
     requestBody: resolveRef(spec, operation.requestBody),
     security: operation.security ?? spec.security ?? [],
+  };
+};
+
+const describePackageOperation = async (packageId, id) => {
+  const detail = describeOperation(await fetchPackageSpecs(packageId), id);
+  const auth = await authPlan(packageId);
+  return {
+    ...detail,
+    auth: {
+      status: auth.status,
+      mode: auth.runtime?.mode,
+      required_env: unique([
+        auth.profile_auth?.env,
+        auth.profile_auth?.usernameEnv,
+        auth.profile_auth?.passwordEnv,
+        auth.profile_auth?.refreshTokenEnv,
+        auth.profile_auth?.accessTokenEnv,
+        auth.profile_auth?.organizationIdEnv,
+      ]),
+      gaps: auth.gaps ?? [],
+    },
   };
 };
 
@@ -782,7 +877,7 @@ const authLikeParameters = (specs, auth) =>
               const authNames = ["authorization", "api_key", "apikey", "x-api-key"];
               const required = parameter.required === true;
               const tokenIsAuth = name === "token" && required;
-              const keyIsAuth = name === "key" && (auth.type === "api_key" || auth.queryParam === "key");
+              const keyIsAuth = name === "key" && (auth.type === "api_key" || auth.queryParam === "key" || (auth.type === "unknown" && required));
               return ["header", "query"].includes(parameter.in) && (authNames.includes(name) || tokenIsAuth || keyIsAuth);
             })
             .map((parameter) => ({
@@ -882,6 +977,7 @@ const authPlan = async (packageId) => {
   const tokenOperation = profile.auth.tokenOperation ? requestPlan(specs, profile.auth.tokenOperation) : null;
   const gaps = [
     profile.auth.type === "unknown" && schemes.length > 0 ? "Profile auth type is unknown; detected machine-readable auth schemes." : null,
+    profile.auth.type === "unknown" && parameters.length > 0 ? "Auth-like operation parameters were detected; profile needs auth details." : null,
     profile.auth.type !== "unknown" && !defaultInjection && profile.auth.type !== "token_exchange" ? "Profile auth type is set but runtime injection is incomplete." : null,
     profile.auth.type === "basic" && (!profile.auth.usernameEnv || !profile.auth.passwordEnv) ? "Basic auth needs username_env and password_env in the profile." : null,
     profile.auth.type === "api_key" && !profile.auth.env ? "API key auth needs env in the profile." : null,
@@ -948,7 +1044,7 @@ const requestPlan = (spec, id) => {
     spec_title: operation.spec_title,
     method: operation.method,
     url_template: joinUrlTemplate(serverUrl(selectedSpec), operation.path),
-    safety: operation.method === "GET" ? "read" : operation.method === "DELETE" ? "destructive" : "write",
+    safety: operationSafety(operation.method),
     path_parameters: pathParameters.map((parameter) => ({
       name: parameter.name,
       required: parameter.required === true,
@@ -969,6 +1065,80 @@ const requestPlan = (spec, id) => {
     })),
     needs_body: needsBody,
     security: operation.security,
+  };
+};
+
+const applyTemplateValues = (urlTemplate, parameters) =>
+  Object.entries(parameters).reduce(
+    (url, [name, value]) => url.replaceAll(`{${name}}`, encodeURIComponent(value)),
+    urlTemplate,
+  );
+
+const responsePreview = async (response) => {
+  const contentType = response.headers.get("content-type") ?? "";
+  const text = await response.text();
+  if (contentType.includes("application/json")) {
+    try {
+      return { json: JSON.parse(text) };
+    } catch {
+      return { text: text.slice(0, 2000), truncated: text.length > 2000 };
+    }
+  }
+  return { text: text.slice(0, 2000), truncated: text.length > 2000 };
+};
+
+const callOperation = async (packageId, id, args) => {
+  const parameters = parseParamValues(args);
+  const dryRun = args.includes("--dry-run");
+  const plan = requestPlan(await fetchPackageSpecs(packageId), id);
+  if (plan.safety !== "read") {
+    throw new Error("Only read-only GET operations can be called by the spike runtime.");
+  }
+
+  const missingPath = plan.path_parameters.filter((parameter) => parameter.required && parameters[parameter.name] === undefined);
+  const missingQuery = plan.query_parameters.filter((parameter) => parameter.required && parameters[parameter.name] === undefined);
+  const missingHeaders = plan.header_parameters.filter((parameter) => parameter.required && parameters[parameter.name] === undefined);
+  const missing = [...missingPath, ...missingQuery, ...missingHeaders].map((parameter) => parameter.name);
+  if (missing.length > 0) {
+    throw new Error(`Missing required parameters: ${missing.join(", ")}`);
+  }
+
+  const url = new URL(applyTemplateValues(plan.url_template, parameters));
+  for (const parameter of plan.query_parameters) {
+    if (parameters[parameter.name] !== undefined && !url.searchParams.has(parameter.name)) {
+      url.searchParams.set(parameter.name, parameters[parameter.name]);
+    }
+  }
+
+  const headers = {};
+  for (const parameter of plan.header_parameters) {
+    if (parameters[parameter.name] !== undefined) {
+      headers[parameter.name] = parameters[parameter.name];
+    }
+  }
+
+  const request = {
+    method: plan.method,
+    url: url.toString(),
+    headers: Object.keys(headers).sort(),
+    safety: plan.safety,
+  };
+  if (dryRun) {
+    return { package: packageId, operation: plan.qualified_id, status: "dry_run", request };
+  }
+
+  const response = await fetch(url, { method: plan.method, headers, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
+  return {
+    package: packageId,
+    operation: plan.qualified_id,
+    status: response.ok ? "ok" : "http_error",
+    request,
+    response: {
+      status: response.status,
+      status_text: response.statusText,
+      content_type: response.headers.get("content-type") ?? "",
+      ...(await responsePreview(response)),
+    },
   };
 };
 
@@ -1067,6 +1237,19 @@ const parseFlag = (flagName, defaultValue) => {
   const index = restArgs.indexOf(flagName);
   return index === -1 ? defaultValue : restArgs[index + 1];
 };
+
+const parseRepeatedFlag = (args, flagName) =>
+  args.flatMap((value, index) => value === flagName ? [args[index + 1]] : [])
+    .filter(Boolean);
+
+const parseParamValues = (args) =>
+  Object.fromEntries(parseRepeatedFlag(args, "--param").map((entry) => {
+    const separator = entry.indexOf("=");
+    if (separator === -1) {
+      throw new Error("--param values must use name=value");
+    }
+    return [entry.slice(0, separator), entry.slice(separator + 1)];
+  }));
 
 const runProcess = async (executable, args, timeoutMs) =>
   new Promise((resolve) => {
@@ -1177,17 +1360,29 @@ const bootstrapAgent = async (packageId) => {
 };
 
 const packageCommand = async (packageId, subcommand, args) => {
-  if (!(await profileExists(packageId))) {
+  let profile;
+  try {
+    profile = await readProfile(packageId);
+  } catch (error) {
+    if (error.code !== "ENOENT") {
+      throw error;
+    }
     return null;
+  }
+  if (profile.graphqlUrl && !profile.apisGuru && !profile.openapiUrl && profile.openapiUrls.length === 0) {
+    return validateProfile(packageId);
   }
   if (!subcommand || subcommand === "ops") {
     return searchOperations(packageOperations(await fetchPackageSpecs(packageId)), args.join(" "));
   }
   if (subcommand === "describe") {
-    return describeOperation(await fetchPackageSpecs(packageId), args.join(" "));
+    return describePackageOperation(packageId, args.join(" "));
   }
   if (subcommand === "plan-call") {
     return requestPlan(await fetchPackageSpecs(packageId), args.join(" "));
+  }
+  if (subcommand === "call") {
+    return callOperation(packageId, args[0], args.slice(1));
   }
   throw new Error(`Unknown package command: ${packageId} ${subcommand}`);
 };
@@ -1230,7 +1425,7 @@ const main = async () => {
     return searchOperations(packageOperations(await fetchPackageSpecs(packageIdOrQuery)), restArgs.join(" "));
   }
   if (command === "describe") {
-    return describeOperation(await fetchPackageSpecs(packageIdOrQuery), restArgs.join(" "));
+    return describePackageOperation(packageIdOrQuery, restArgs.join(" "));
   }
   if (command === "plan-call") {
     return requestPlan(await fetchPackageSpecs(packageIdOrQuery), restArgs.join(" "));

@@ -1,8 +1,8 @@
 id: linear
 name: Linear
 sources:
-  graphql_url: https://api.linear.app/graphql
   docs_url: https://linear.app/docs/api-and-webhooks
+  graphql_url: https://api.linear.app/graphql
 auth:
   type: bearer
   env: LINEAR_API_KEY

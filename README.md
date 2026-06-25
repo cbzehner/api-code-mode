@@ -28,16 +28,20 @@ progressive discovery loop.
 ## Public Flow
 
 Public commands are named for what a human or LLM is trying to do, not for the
-runtime phase that implements it. `generate`, `ops`, and `describe` are public;
-source discovery, auth planning, request planning, validation, and bootstrap
-repair stay private diagnostics.
+runtime phase that implements it. `generate`, `ops`, `describe`, and read-only
+`call` are public; source discovery, auth planning, request planning, validation,
+and bootstrap repair stay private diagnostics.
 
 ```bash
 npm run help
 npm run generate -- cable.tech
 node src/cli.mjs cable ops transaction
 node src/cli.mjs cable describe api-reference:request-token
+node src/cli.mjs github call github-v3-rest-api:meta/root
 ```
+
+`call` currently executes only read-only GET operations. Write and destructive
+operations fail before making a network request.
 
 `generate` is the user-facing orchestration command. It derives a package id
 from the domain, discovers sources, writes or updates `pkgs/<id>/profile.yaml`,
@@ -79,9 +83,10 @@ See `docs/self-healing.md` for the target `bootstrap-agent` flow.
 ## Source Discovery
 
 `discover-sources` finds machine-readable sources without writing files. It
-checks APIs.guru, common OpenAPI/Swagger paths, `llms.txt`, docs MCP links, and
-OpenAPI index pages. It also follows likely docs/API/developer links from a
-homepage and probes common subdomains such as `docs.*` and `api.*`.
+checks APIs.guru, common OpenAPI/Swagger paths, common GraphQL endpoints,
+`llms.txt`, docs MCP links, and OpenAPI index pages. It also follows likely
+docs/API/developer links from a homepage and probes common subdomains such as
+`docs.*` and `api.*`.
 `discover-apply` writes one selected candidate into a profile and reruns
 validation.
 

@@ -9,6 +9,7 @@ npm run validate >/tmp/api-code-mode-validate.json
 npm run gaps >/tmp/api-code-mode-gaps.json
 npm run discover-sources -- github.com >/tmp/api-code-mode-github-discovery.json
 npm run discover-sources -- cable.tech >/tmp/api-code-mode-cable-domain-discovery.json
+node src/cli.mjs discover-sources developer.atlassian.com >/tmp/api-code-mode-atlassian-discovery.json
 npm run bootstrap-prompt -- cable >/tmp/api-code-mode-cable-bootstrap.json
 npm run bootstrap-new -- smoke-api-code-mode --name "Smoke API" --docs-url https://example.com/docs >/tmp/api-code-mode-bootstrap-new.json
 npm run bootstrap-new -- smoke-cable-discovery --name "Smoke Cable Discovery" --docs-url https://docs.cable.tech/ >/tmp/api-code-mode-cable-discovery-new.json
@@ -29,6 +30,11 @@ npm run plan-auth -- slack >/tmp/api-code-mode-slack-auth-plan.json
 npm run plan-auth -- sms77 >/tmp/api-code-mode-sms77-auth-plan.json
 npm run plan-auth -- twilio >/tmp/api-code-mode-twilio-auth-plan.json
 node src/cli.mjs cable ops transaction >/tmp/api-code-mode-cable-scoped-ops.json
+node src/cli.mjs github call github-v3-rest-api:meta/root >/tmp/api-code-mode-github-call-root.json
+if node src/cli.mjs github call github-v3-rest-api:activity/mark-notifications-as-read >/tmp/api-code-mode-github-call-write.json 2>/tmp/api-code-mode-github-call-write.err; then
+  echo "expected write call to fail" >&2
+  exit 1
+fi
 
 node -e '
 const fs = require("fs");
@@ -38,6 +44,7 @@ const validate = JSON.parse(fs.readFileSync("/tmp/api-code-mode-validate.json", 
 const gaps = JSON.parse(fs.readFileSync("/tmp/api-code-mode-gaps.json", "utf8").split("\n").slice(3).join("\n"));
 const githubDiscovery = JSON.parse(fs.readFileSync("/tmp/api-code-mode-github-discovery.json", "utf8").split("\n").slice(3).join("\n"));
 const cableDomainDiscovery = JSON.parse(fs.readFileSync("/tmp/api-code-mode-cable-domain-discovery.json", "utf8").split("\n").slice(3).join("\n"));
+const atlassianDiscovery = JSON.parse(fs.readFileSync("/tmp/api-code-mode-atlassian-discovery.json", "utf8"));
 const cableBootstrap = JSON.parse(fs.readFileSync("/tmp/api-code-mode-cable-bootstrap.json", "utf8").split("\n").slice(3).join("\n"));
 const bootstrapNew = JSON.parse(fs.readFileSync("/tmp/api-code-mode-bootstrap-new.json", "utf8").split("\n").slice(3).join("\n"));
 const cableDiscovery = JSON.parse(fs.readFileSync("/tmp/api-code-mode-cable-discovery-sources.json", "utf8").split("\n").slice(3).join("\n"));
@@ -48,6 +55,8 @@ const slackAuthPlan = JSON.parse(fs.readFileSync("/tmp/api-code-mode-slack-auth-
 const sms77AuthPlan = JSON.parse(fs.readFileSync("/tmp/api-code-mode-sms77-auth-plan.json", "utf8").split("\n").slice(3).join("\n"));
 const twilioAuthPlan = JSON.parse(fs.readFileSync("/tmp/api-code-mode-twilio-auth-plan.json", "utf8").split("\n").slice(3).join("\n"));
 const cableScopedOps = JSON.parse(fs.readFileSync("/tmp/api-code-mode-cable-scoped-ops.json", "utf8"));
+const githubCallRoot = JSON.parse(fs.readFileSync("/tmp/api-code-mode-github-call-root.json", "utf8"));
+const githubCallWriteError = fs.readFileSync("/tmp/api-code-mode-github-call-write.err", "utf8");
 
 if (!help.commands.some((command) => command.command === "generate <domain-or-url>")) {
   throw new Error("expected public help to include generate");
@@ -63,6 +72,12 @@ if (generateCable.package !== "cable" || generateCable.status !== "ready") {
 if (!cableScopedOps.some((operation) => operation.qualified_id?.includes("transaction"))) {
   throw new Error("expected generated cable package-scoped ops to work");
 }
+if (!["ok", "http_error"].includes(githubCallRoot.status) || typeof githubCallRoot.response.status !== "number") {
+  throw new Error("expected read-only GitHub root call to capture an HTTP response");
+}
+if (!githubCallWriteError.includes("Only read-only GET operations")) {
+  throw new Error("expected write call to fail before network request");
+}
 if (validate.filter((result) => result.status === "ok").length !== 14) {
   throw new Error("expected 14 package profiles to validate");
 }
@@ -74,6 +89,9 @@ if (!githubDiscovery.candidates.some((candidate) => candidate.type === "apis_gur
 }
 if (!cableDomainDiscovery.candidates.some((candidate) => candidate.type === "openapi_urls" || candidate.type === "openapi_url")) {
   throw new Error("expected Cable domain discovery to find OpenAPI candidates");
+}
+if (!atlassianDiscovery.candidates.some((candidate) => candidate.type === "graphql_url")) {
+  throw new Error("expected Atlassian discovery to find a GraphQL candidate");
 }
 if (!cableBootstrap.prompt.includes("pkgs/cable/profile.yaml")) {
   throw new Error("expected bootstrap prompt to scope edits to the cable profile");

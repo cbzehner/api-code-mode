@@ -16,7 +16,11 @@ api-code-mode help
 api-code-mode generate <domain-or-url>
 api-code-mode <package> ops [query]
 api-code-mode <package> describe <operation-id>
+api-code-mode <package> call <operation-id> [--param name=value]
 ```
+
+`call` is limited to read-only GET operations in the spike runtime. Write and
+destructive operations must fail before any network request is made.
 
 Private diagnostic commands remain stable for agents and maintainers, but they
 must not appear in public help:
@@ -129,9 +133,9 @@ Multi-spec packages should expose `qualified_id` values in the form
 
 `discover-sources` returns structured JSON candidates. It must not write files.
 The deterministic pipeline checks APIs.guru, common OpenAPI/Swagger paths,
-`llms.txt`, MCP links, likely docs/developer/API links from homepages, common
-`docs.*`/`api.*`/`developer.*` subdomains, and OpenAPI index pages. Guessed
-subdomains are DNS-checked before HTTP probing.
+common GraphQL endpoints, `llms.txt`, MCP links, likely docs/developer/API links
+from homepages, common `docs.*`/`api.*`/`developer.*` subdomains, and OpenAPI
+index pages. Guessed subdomains are DNS-checked before HTTP probing.
 
 `discover-apply` is the only discovery command that writes profile changes. It
 recomputes candidates, applies the selected candidate to `sources`, and returns
