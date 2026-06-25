@@ -6,6 +6,9 @@
     "search": "node src/cli.mjs search",
     "ops": "node src/cli.mjs ops",
     "describe": "node src/cli.mjs describe",
+    "gaps": "node src/cli.mjs gaps",
+    "plan-call": "node src/cli.mjs plan-call",
+    "smoke": "bash scripts/smoke.sh",
     "validate": "node src/cli.mjs validate"
   }
 }

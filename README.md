@@ -30,8 +30,12 @@ progressive discovery loop.
 ```bash
 npm run search -- github
 npm run ops -- github
+npm run ops -- stripe customer
 npm run describe -- github apps/delete-installation
+npm run plan-call -- github apps/delete-installation
 npm run validate
+npm run gaps
+npm run smoke
 ```
 
 ## Validation Set
@@ -63,3 +67,9 @@ call_operation
 ```
 
 The agent pulls detail only when it needs it.
+
+## Rust Rewrite
+
+The Node runtime is a behavior spike. Keep command output compatible with
+`CONTRACT.md`; rebuild the real CLI in Rust once the command shape and package
+profile fields stop moving.

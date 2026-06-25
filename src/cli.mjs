@@ -2,7 +2,7 @@ import { readdir, readFile } from "node:fs/promises";
 
 const API_INDEX_URL = "https://api.apis.guru/v2/list.json";
 
-const [command, packageIdOrQuery, operationId] = process.argv.slice(2);
+const [command, packageIdOrQuery, ...restArgs] = process.argv.slice(2);
 
 const readJson = async (url) => {
   const response = await fetch(url);
@@ -15,6 +15,17 @@ const readJson = async (url) => {
 const latestVersion = (api) => api.versions[api.preferred] ?? Object.values(api.versions).at(-1);
 
 const loadIndex = async () => readJson(API_INDEX_URL);
+
+const resolveRef = (spec, value) => {
+  if (!value?.$ref?.startsWith("#/")) {
+    return value;
+  }
+
+  return value.$ref
+    .slice(2)
+    .split("/")
+    .reduce((node, key) => node?.[key], spec);
+};
 
 const readProfile = async (packageId) => {
   const text = await readFile(new URL(`../pkgs/${packageId}/profile.yaml`, import.meta.url), "utf8");
@@ -77,6 +88,23 @@ const operations = (spec) =>
       })),
   );
 
+const searchOperations = (spec, query) => {
+  if (!query) {
+    return operations(spec).slice(0, 25);
+  }
+
+  const normalizedQuery = query.toLowerCase();
+  return operations(spec)
+    .filter((operation) =>
+      [operation.id, operation.method, operation.path, operation.summary, ...(operation.tags ?? [])]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase()
+        .includes(normalizedQuery),
+    )
+    .slice(0, 25);
+};
+
 const describeOperation = (spec, id) => {
   const match = operations(spec).find((operation) => operation.id === id);
   if (!match) {
@@ -87,9 +115,49 @@ const describeOperation = (spec, id) => {
   return {
     ...match,
     description: operation.description,
-    parameters: operation.parameters ?? [],
-    requestBody: operation.requestBody,
+    parameters: (operation.parameters ?? []).map((parameter) => resolveRef(spec, parameter)),
+    requestBody: resolveRef(spec, operation.requestBody),
     security: operation.security ?? spec.security ?? [],
+  };
+};
+
+const serverUrl = (spec) => spec.servers?.[0]?.url ?? "";
+
+const joinUrlTemplate = (baseUrl, path) => `${baseUrl.replace(/\/+$/, "")}/${path.replace(/^\/+/, "")}`;
+
+const requestPlan = (spec, id) => {
+  const operation = describeOperation(spec, id);
+  const parameters = operation.parameters ?? [];
+  const pathParameters = parameters.filter((parameter) => parameter.in === "path");
+  const queryParameters = parameters.filter((parameter) => parameter.in === "query");
+  const headerParameters = parameters.filter((parameter) => parameter.in === "header");
+  const needsBody = Boolean(operation.requestBody);
+
+  return {
+    operation: operation.id,
+    method: operation.method,
+    url_template: joinUrlTemplate(serverUrl(spec), operation.path),
+    safety: operation.method === "GET" ? "read" : operation.method === "DELETE" ? "destructive" : "write",
+    path_parameters: pathParameters.map((parameter) => ({
+      name: parameter.name,
+      required: parameter.required === true,
+      type: parameter.schema?.type,
+      description: parameter.description,
+    })),
+    query_parameters: queryParameters.map((parameter) => ({
+      name: parameter.name,
+      required: parameter.required === true,
+      type: parameter.schema?.type,
+      description: parameter.description,
+    })),
+    header_parameters: headerParameters.map((parameter) => ({
+      name: parameter.name,
+      required: parameter.required === true,
+      type: parameter.schema?.type,
+      description: parameter.description,
+    })),
+    needs_body: needsBody,
+    security: operation.security,
   };
 };
 
@@ -114,12 +182,14 @@ const validateProfile = async (packageId) => {
 
   try {
     const spec = await fetchSpec(packageId);
-    const operationCount = operations(spec).length;
+    const listedOperations = operations(spec);
+    const methods = [...new Set(listedOperations.map((operation) => operation.method))].sort();
     return {
       package: packageId,
       status: "ok",
       source: profile.apisGuru ? "apis.guru" : "openapi_url",
-      operations: operationCount,
+      operations: listedOperations.length,
+      methods,
     };
   } catch (error) {
     return {
@@ -131,7 +201,8 @@ const validateProfile = async (packageId) => {
 };
 
 const main = async () => {
-  if (!command || (command !== "validate" && !packageIdOrQuery)) {
+  const packageOptionalCommands = new Set(["gaps", "validate"]);
+  if (!command || (!packageOptionalCommands.has(command) && !packageIdOrQuery)) {
     throw new Error("Usage: npm run search -- <query> | npm run ops -- <package> | npm run describe -- <package> <operationId>");
   }
 
@@ -139,10 +210,17 @@ const main = async () => {
     return searchApis(packageIdOrQuery);
   }
   if (command === "ops") {
-    return operations(await fetchSpec(packageIdOrQuery)).slice(0, 25);
+    return searchOperations(await fetchSpec(packageIdOrQuery), restArgs.join(" "));
   }
   if (command === "describe") {
-    return describeOperation(await fetchSpec(packageIdOrQuery), operationId);
+    return describeOperation(await fetchSpec(packageIdOrQuery), restArgs.join(" "));
+  }
+  if (command === "plan-call") {
+    return requestPlan(await fetchSpec(packageIdOrQuery), restArgs.join(" "));
+  }
+  if (command === "gaps") {
+    const results = await Promise.all((await packageIds()).map(validateProfile));
+    return results.filter((result) => result.status !== "ok");
   }
   if (command === "validate") {
     const ids = packageIdOrQuery ? [packageIdOrQuery] : await packageIds();
