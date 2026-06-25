@@ -1,0 +1,10 @@
+id: google-sheets
+name: Google Sheets
+sources:
+  apis_guru: googleapis.com:sheets
+auth:
+  type: oauth2
+policy:
+  default_write: confirm
+output:
+  default_format: json

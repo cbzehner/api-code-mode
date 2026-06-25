@@ -1,0 +1,11 @@
+id: notion
+name: Notion
+sources:
+  apis_guru: notion.com
+auth:
+  type: bearer
+  env: NOTION_TOKEN
+policy:
+  default_write: confirm
+output:
+  default_format: json

@@ -1,0 +1,10 @@
+id: google-drive
+name: Google Drive
+sources:
+  apis_guru: googleapis.com:drive
+auth:
+  type: oauth2
+policy:
+  default_write: confirm
+output:
+  default_format: json

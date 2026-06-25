@@ -1,0 +1,10 @@
+id: cable
+name: Cable
+sources:
+  docs_url: https://docs.cable.tech/
+auth:
+  type: unknown
+policy:
+  default_write: confirm
+output:
+  default_format: json

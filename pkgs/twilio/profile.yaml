@@ -1,0 +1,10 @@
+id: twilio
+name: Twilio API
+sources:
+  apis_guru: twilio.com:api
+auth:
+  type: basic
+policy:
+  default_write: confirm
+output:
+  default_format: json

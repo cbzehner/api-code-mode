@@ -1,0 +1,11 @@
+id: slack
+name: Slack
+sources:
+  apis_guru: slack.com
+auth:
+  type: bearer
+  env: SLACK_BOT_TOKEN
+policy:
+  default_write: confirm
+output:
+  default_format: json

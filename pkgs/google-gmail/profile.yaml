@@ -1,0 +1,10 @@
+id: google-gmail
+name: Google Gmail
+sources:
+  apis_guru: googleapis.com:gmail
+auth:
+  type: oauth2
+policy:
+  default_write: confirm
+output:
+  default_format: json

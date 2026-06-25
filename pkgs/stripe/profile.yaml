@@ -1,0 +1,11 @@
+id: stripe
+name: Stripe
+sources:
+  apis_guru: stripe.com
+auth:
+  type: bearer
+  env: STRIPE_API_KEY
+policy:
+  default_write: confirm
+output:
+  default_format: json

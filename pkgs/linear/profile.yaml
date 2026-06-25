@@ -1,0 +1,12 @@
+id: linear
+name: Linear
+sources:
+  graphql_url: https://api.linear.app/graphql
+  docs_url: https://linear.app/docs/api-and-webhooks
+auth:
+  type: bearer
+  env: LINEAR_API_KEY
+policy:
+  default_write: confirm
+output:
+  default_format: json

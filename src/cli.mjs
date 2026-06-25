@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 
 const API_INDEX_URL = "https://api.apis.guru/v2/list.json";
 
@@ -18,21 +18,34 @@ const loadIndex = async () => readJson(API_INDEX_URL);
 
 const readProfile = async (packageId) => {
   const text = await readFile(new URL(`../pkgs/${packageId}/profile.yaml`, import.meta.url), "utf8");
-  const apisGuru = text.match(/apis_guru:\s*(.+)/)?.[1]?.trim();
-  if (!apisGuru) {
-    throw new Error(`pkgs/${packageId}/profile.yaml must define sources.apis_guru`);
-  }
-  return { id: packageId, apisGuru };
+  return {
+    id: packageId,
+    apisGuru: text.match(/apis_guru:\s*(.+)/)?.[1]?.trim(),
+    openapiUrl: text.match(/openapi_url:\s*(.+)/)?.[1]?.trim(),
+    graphqlUrl: text.match(/graphql_url:\s*(.+)/)?.[1]?.trim(),
+    docsUrl: text.match(/docs_url:\s*(.+)/)?.[1]?.trim(),
+  };
 };
 
 const fetchSpec = async (packageId) => {
   const profile = await readProfile(packageId);
+  if (profile.openapiUrl) {
+    return readJson(profile.openapiUrl);
+  }
+  if (!profile.apisGuru) {
+    throw new Error(`pkgs/${packageId}/profile.yaml does not define a supported OpenAPI source`);
+  }
   const index = await loadIndex();
   const api = index[profile.apisGuru];
   if (!api) {
     throw new Error(`API not found in APIs.guru index: ${profile.apisGuru}`);
   }
   return readJson(latestVersion(api).swaggerUrl);
+};
+
+const packageIds = async () => {
+  const entries = await readdir(new URL("../pkgs", import.meta.url), { withFileTypes: true });
+  return entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name).sort();
 };
 
 const searchApis = async (term) => {
@@ -80,8 +93,45 @@ const describeOperation = (spec, id) => {
   };
 };
 
+const validateProfile = async (packageId) => {
+  const profile = await readProfile(packageId);
+  if (profile.graphqlUrl) {
+    return {
+      package: packageId,
+      status: "unsupported",
+      source: "graphql",
+      gap: "GraphQL introspection is not implemented yet.",
+    };
+  }
+  if (!profile.apisGuru && !profile.openapiUrl) {
+    return {
+      package: packageId,
+      status: "missing_source",
+      source: profile.docsUrl ? "docs" : "unknown",
+      gap: "No machine-readable OpenAPI source is configured.",
+    };
+  }
+
+  try {
+    const spec = await fetchSpec(packageId);
+    const operationCount = operations(spec).length;
+    return {
+      package: packageId,
+      status: "ok",
+      source: profile.apisGuru ? "apis.guru" : "openapi_url",
+      operations: operationCount,
+    };
+  } catch (error) {
+    return {
+      package: packageId,
+      status: "failed",
+      error: error.message,
+    };
+  }
+};
+
 const main = async () => {
-  if (!command || !packageIdOrQuery) {
+  if (!command || (command !== "validate" && !packageIdOrQuery)) {
     throw new Error("Usage: npm run search -- <query> | npm run ops -- <package> | npm run describe -- <package> <operationId>");
   }
 
@@ -93,6 +143,10 @@ const main = async () => {
   }
   if (command === "describe") {
     return describeOperation(await fetchSpec(packageIdOrQuery), operationId);
+  }
+  if (command === "validate") {
+    const ids = packageIdOrQuery ? [packageIdOrQuery] : await packageIds();
+    return Promise.all(ids.map(validateProfile));
   }
   throw new Error(`Unknown command: ${command}`);
 };

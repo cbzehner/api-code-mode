@@ -31,7 +31,23 @@ progressive discovery loop.
 npm run search -- github
 npm run ops -- github
 npm run describe -- github apps/delete-installation
+npm run validate
 ```
+
+## Validation Set
+
+The first `pkgs/` set intentionally mixes API styles:
+
+- `github`: broad, polished OpenAPI via APIs.guru.
+- `stripe`: large commercial REST API via APIs.guru.
+- `slack`: RPC-shaped HTTP API via APIs.guru.
+- `google-gmail`: Google Workspace service via APIs.guru.
+- `google-drive`: Google Workspace service via APIs.guru.
+- `google-sheets`: Google Workspace service via APIs.guru.
+- `notion`: modern SaaS API via APIs.guru.
+- `twilio`: broad API family via APIs.guru.
+- `linear`: GraphQL API, currently unsupported by the runtime.
+- `cable`: docs-discovered provider with no configured machine-readable spec yet.
 
 ## Why Not A Mega-MCP?
 
