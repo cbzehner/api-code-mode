@@ -2,8 +2,15 @@ id: cable
 name: Cable
 sources:
   docs_url: https://docs.cable.tech/
+  llms_url: https://docs.cable.tech/v-2-0/llms.txt
+  mcp_url: https://docs.cable.tech/v-2-0/_mcp/server
+  openapi_urls:
+    - https://docs.cable.tech/openapi/api-reference.json
+    - https://docs.cable.tech/openapi/customer-data-api.json
+    - https://docs.cable.tech/openapi/transaction-data-api.json
 auth:
-  type: unknown
+  type: bearer
+  env: CABLE_API_TOKEN
 policy:
   default_write: confirm
 output:

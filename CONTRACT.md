@@ -33,12 +33,18 @@ Supported source fields:
 sources:
   apis_guru: github.com
   openapi_url: https://example.com/openapi.json
+  openapi_urls:
+    - https://example.com/openapi-a.json
+    - https://example.com/openapi-b.json
   graphql_url: https://api.example.com/graphql
   docs_url: https://docs.example.com
+  llms_url: https://docs.example.com/llms.txt
+  mcp_url: https://docs.example.com/_mcp/server
 ```
 
-Only `apis_guru` and `openapi_url` are executable today. `graphql_url` and
-`docs_url` are validation gaps until adapters exist.
+Only `apis_guru`, `openapi_url`, and `openapi_urls` are executable today.
+`graphql_url`, `docs_url`, `llms_url`, and `mcp_url` are discovery/adapter
+inputs until adapters exist.
 
 ## Validation Statuses
 
@@ -64,3 +70,6 @@ and validation are explicit.
 
 The runner must report `repaired`, `adapter_needed`, `source_missing`, or
 `failed`.
+
+Multi-spec packages should expose `qualified_id` values in the form
+`<spec>:<operation-id>` so duplicated operation IDs can be called unambiguously.

@@ -39,13 +39,24 @@ const resolveRef = (spec, value) => {
 const readProfile = async (packageId) => {
   assertPackageId(packageId);
   const text = await readFile(new URL("profile.yaml", packageDirectoryUrl(packageId)), "utf8");
+  const listValues = (key) => {
+    const match = text.match(new RegExp(`^  ${key}:\\n((?:    - .+\\n?)+)`, "m"));
+    if (!match) {
+      return [];
+    }
+    return match[1].split("\n").map((line) => line.trim().replace(/^- /, "")).filter(Boolean);
+  };
+
   return {
     id: packageId,
     name: text.match(/^name:\s*(.+)$/m)?.[1]?.trim(),
     apisGuru: text.match(/apis_guru:\s*(.+)/)?.[1]?.trim(),
     openapiUrl: text.match(/openapi_url:\s*(.+)/)?.[1]?.trim(),
+    openapiUrls: listValues("openapi_urls"),
     graphqlUrl: text.match(/graphql_url:\s*(.+)/)?.[1]?.trim(),
     docsUrl: text.match(/docs_url:\s*(.+)/)?.[1]?.trim(),
+    llmsUrl: text.match(/llms_url:\s*(.+)/)?.[1]?.trim(),
+    mcpUrl: text.match(/mcp_url:\s*(.+)/)?.[1]?.trim(),
     text,
   };
 };
@@ -109,19 +120,28 @@ const createDraftProfile = async (packageId) => {
 
 const fetchSpec = async (packageId) => {
   const profile = await readProfile(packageId);
-  if (profile.openapiUrl) {
-    return readJson(profile.openapiUrl);
+  const specs = await fetchSpecs(profile);
+  return specs[0]?.spec;
+};
+
+const fetchSpecs = async (profile) => {
+  const urls = [...profile.openapiUrls, profile.openapiUrl].filter(Boolean);
+  if (urls.length > 0) {
+    return Promise.all(urls.map(async (url) => ({ source: url, spec: await readJson(url) })));
   }
   if (!profile.apisGuru) {
-    throw new Error(`pkgs/${packageId}/profile.yaml does not define a supported OpenAPI source`);
+    throw new Error(`pkgs/${profile.id}/profile.yaml does not define a supported OpenAPI source`);
   }
   const index = await loadIndex();
   const api = index[profile.apisGuru];
   if (!api) {
     throw new Error(`API not found in APIs.guru index: ${profile.apisGuru}`);
   }
-  return readJson(latestVersion(api).swaggerUrl);
+  const source = latestVersion(api).swaggerUrl;
+  return [{ source, spec: await readJson(source) }];
 };
+
+const fetchPackageSpecs = async (packageId) => fetchSpecs(await readProfile(packageId));
 
 const packageIds = async () => {
   const entries = await readdir(new URL("../pkgs", import.meta.url), { withFileTypes: true });
@@ -157,15 +177,28 @@ const operations = (spec) =>
       })),
   );
 
-const searchOperations = (spec, query) => {
+const specSlug = (spec, index) => (spec.info?.title ?? `spec-${index + 1}`).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+
+const packageOperations = (specs) =>
+  specs.flatMap(({ source, spec }, index) =>
+    operations(spec).map((operation) => ({
+      ...operation,
+      spec: specSlug(spec, index),
+      spec_title: spec.info?.title,
+      source,
+      qualified_id: `${specSlug(spec, index)}:${operation.id}`,
+    })),
+  );
+
+const searchOperations = (listedOperations, query) => {
   if (!query) {
-    return operations(spec).slice(0, 25);
+    return listedOperations.slice(0, 25);
   }
 
   const normalizedQuery = query.toLowerCase();
-  return operations(spec)
+  return listedOperations
     .filter((operation) =>
-      [operation.id, operation.method, operation.path, operation.summary, ...(operation.tags ?? [])]
+      [operation.id, operation.qualified_id, operation.spec_title, operation.method, operation.path, operation.summary, ...(operation.tags ?? [])]
         .filter(Boolean)
         .join(" ")
         .toLowerCase()
@@ -174,12 +207,18 @@ const searchOperations = (spec, query) => {
     .slice(0, 25);
 };
 
-const describeOperation = (spec, id) => {
-  const match = operations(spec).find((operation) => operation.id === id);
+const findOperation = (specs, id) => {
+  const listedOperations = packageOperations(specs);
+  return listedOperations.find((operation) => operation.qualified_id === id) ?? listedOperations.find((operation) => operation.id === id);
+};
+
+const describeOperation = (specs, id) => {
+  const match = findOperation(specs, id);
   if (!match) {
     throw new Error(`Operation not found: ${id}`);
   }
 
+  const spec = specs.find((entry) => entry.source === match.source).spec;
   const operation = spec.paths[match.path][match.method.toLowerCase()];
   return {
     ...match,
@@ -195,7 +234,9 @@ const serverUrl = (spec) => spec.servers?.[0]?.url ?? "";
 const joinUrlTemplate = (baseUrl, path) => `${baseUrl.replace(/\/+$/, "")}/${path.replace(/^\/+/, "")}`;
 
 const requestPlan = (spec, id) => {
-  const operation = describeOperation(spec, id);
+  const specs = Array.isArray(spec) ? spec : [{ source: "inline", spec }];
+  const operation = describeOperation(specs, id);
+  const selectedSpec = specs.find((entry) => entry.source === operation.source).spec;
   const parameters = operation.parameters ?? [];
   const pathParameters = parameters.filter((parameter) => parameter.in === "path");
   const queryParameters = parameters.filter((parameter) => parameter.in === "query");
@@ -204,8 +245,11 @@ const requestPlan = (spec, id) => {
 
   return {
     operation: operation.id,
+    qualified_id: operation.qualified_id,
+    spec: operation.spec,
+    spec_title: operation.spec_title,
     method: operation.method,
-    url_template: joinUrlTemplate(serverUrl(spec), operation.path),
+    url_template: joinUrlTemplate(serverUrl(selectedSpec), operation.path),
     safety: operation.method === "GET" ? "read" : operation.method === "DELETE" ? "destructive" : "write",
     path_parameters: pathParameters.map((parameter) => ({
       name: parameter.name,
@@ -240,23 +284,24 @@ const validateProfile = async (packageId) => {
       gap: "GraphQL introspection is not implemented yet.",
     };
   }
-  if (!profile.apisGuru && !profile.openapiUrl) {
+  if (!profile.apisGuru && !profile.openapiUrl && profile.openapiUrls.length === 0) {
     return {
       package: packageId,
       status: "missing_source",
-      source: profile.docsUrl ? "docs" : "unknown",
+      source: profile.llmsUrl ? "llms" : profile.mcpUrl ? "mcp" : profile.docsUrl ? "docs" : "unknown",
       gap: "No machine-readable OpenAPI source is configured.",
     };
   }
 
   try {
-    const spec = await fetchSpec(packageId);
-    const listedOperations = operations(spec);
+    const specs = await fetchPackageSpecs(packageId);
+    const listedOperations = packageOperations(specs);
     const methods = [...new Set(listedOperations.map((operation) => operation.method))].sort();
     return {
       package: packageId,
       status: "ok",
-      source: profile.apisGuru ? "apis.guru" : "openapi_url",
+      source: profile.apisGuru ? "apis.guru" : specs.length > 1 ? "openapi_urls" : "openapi_url",
+      specs: specs.length,
       operations: listedOperations.length,
       methods,
     };
@@ -452,13 +497,13 @@ const main = async () => {
     return searchApis(packageIdOrQuery);
   }
   if (command === "ops") {
-    return searchOperations(await fetchSpec(packageIdOrQuery), restArgs.join(" "));
+    return searchOperations(packageOperations(await fetchPackageSpecs(packageIdOrQuery)), restArgs.join(" "));
   }
   if (command === "describe") {
-    return describeOperation(await fetchSpec(packageIdOrQuery), restArgs.join(" "));
+    return describeOperation(await fetchPackageSpecs(packageIdOrQuery), restArgs.join(" "));
   }
   if (command === "plan-call") {
-    return requestPlan(await fetchSpec(packageIdOrQuery), restArgs.join(" "));
+    return requestPlan(await fetchPackageSpecs(packageIdOrQuery), restArgs.join(" "));
   }
   if (command === "gaps") {
     const results = await Promise.all((await packageIds()).map(validateProfile));

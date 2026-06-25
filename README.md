@@ -72,7 +72,7 @@ The first `pkgs/` set intentionally mixes API styles:
 - `notion`: modern SaaS API via APIs.guru.
 - `twilio`: broad API family via APIs.guru.
 - `linear`: GraphQL API, currently unsupported by the runtime.
-- `cable`: docs-discovered provider with no configured machine-readable spec yet.
+- `cable`: Fern-hosted docs with `llms.txt`, MCP metadata, and three OpenAPI specs.
 
 ## Why Not A Mega-MCP?
 
