@@ -1,0 +1,10 @@
+{
+  "name": "api-code-mode",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "search": "node src/cli.mjs search",
+    "ops": "node src/cli.mjs ops",
+    "describe": "node src/cli.mjs describe"
+  }
+}

@@ -1,0 +1,13 @@
+id: github
+name: GitHub
+sources:
+  apis_guru: github.com
+auth:
+  type: bearer
+  env: GITHUB_TOKEN
+policy:
+  default_write: confirm
+  destructive:
+    - apps/delete-installation
+output:
+  default_format: json
