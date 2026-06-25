@@ -35,6 +35,7 @@ node src/cli.mjs countries ops >/tmp/api-code-mode-countries-ops.json
 node src/cli.mjs countries describe query:countries >/tmp/api-code-mode-countries-describe.json
 node src/cli.mjs countries call query:countries --select code --select name >/tmp/api-code-mode-countries-call.json
 WEATHERBIT_API_KEY=test-key node src/cli.mjs weatherbit call 'weatherbit-interactive-swagger-ui-documentation:GET /alerts?lat={lat}&lon={lon}' --param lat=1 --param lon=1 --dry-run >/tmp/api-code-mode-weatherbit-call-dry-run.json
+node src/cli.mjs weatherbit call 'weatherbit-interactive-swagger-ui-documentation:GET /alerts?lat={lat}&lon={lon}' --param lat=1 --param lon=1 --param key=manual-secret --dry-run >/tmp/api-code-mode-weatherbit-call-explicit-key.json
 TWILIO_ACCOUNT_SID=AC123 TWILIO_AUTH_TOKEN=secret node src/cli.mjs twilio call twilio-api:ListAccount --dry-run >/tmp/api-code-mode-twilio-call-dry-run.json
 if node src/cli.mjs github call github-v3-rest-api:activity/mark-notifications-as-read >/tmp/api-code-mode-github-call-write.json 2>/tmp/api-code-mode-github-call-write.err; then
   echo "expected write call to fail" >&2
@@ -73,6 +74,7 @@ const countriesOps = JSON.parse(fs.readFileSync("/tmp/api-code-mode-countries-op
 const countriesDescribe = JSON.parse(fs.readFileSync("/tmp/api-code-mode-countries-describe.json", "utf8"));
 const countriesCall = JSON.parse(fs.readFileSync("/tmp/api-code-mode-countries-call.json", "utf8"));
 const weatherbitCallDryRun = JSON.parse(fs.readFileSync("/tmp/api-code-mode-weatherbit-call-dry-run.json", "utf8"));
+const weatherbitCallExplicitKey = JSON.parse(fs.readFileSync("/tmp/api-code-mode-weatherbit-call-explicit-key.json", "utf8"));
 const twilioCallDryRun = JSON.parse(fs.readFileSync("/tmp/api-code-mode-twilio-call-dry-run.json", "utf8"));
 const githubCallWriteError = fs.readFileSync("/tmp/api-code-mode-github-call-write.err", "utf8");
 const weatherbitMissingKeyError = fs.readFileSync("/tmp/api-code-mode-weatherbit-call-missing-key.err", "utf8");
@@ -106,6 +108,9 @@ if (countriesCall.status !== "ok" || !Array.isArray(countriesCall.response.json?
 }
 if (!weatherbitCallDryRun.request.url.includes("key=%5Bredacted%5D") || weatherbitCallDryRun.request.url.includes("test-key")) {
   throw new Error("expected Weatherbit API key to be injected and redacted");
+}
+if (!weatherbitCallExplicitKey.request.url.includes("key=%5Bredacted%5D") || JSON.stringify(weatherbitCallExplicitKey).includes("manual-secret")) {
+  throw new Error("expected explicit Weatherbit API key to be redacted");
 }
 if (!twilioCallDryRun.request.headers.includes("Authorization")) {
   throw new Error("expected Twilio basic auth to inject Authorization header");

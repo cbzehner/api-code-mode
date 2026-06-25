@@ -302,6 +302,13 @@ const renderValueTemplate = (template) => {
   return template.replace(/\$\{([A-Z0-9_]+)\}/g, (_, name) => process.env[name]);
 };
 
+const sanitizeText = (text, secretValues) =>
+  unique(secretValues)
+    .filter((value) => typeof value === "string" && value.length >= 4)
+    .reduce((sanitized, value) => sanitized.replaceAll(value, "[redacted]"), text);
+
+const sanitizeJson = (value, secretValues) => JSON.parse(sanitizeText(JSON.stringify(value), secretValues));
+
 const graphqlAuthHeaders = (profile, { requireConfigured = false } = {}) => {
   if (!["bearer", "oauth2"].includes(profile.auth.type)) {
     return {};
@@ -316,6 +323,14 @@ const graphqlAuthHeaders = (profile, { requireConfigured = false } = {}) => {
     return {};
   }
   return { Authorization: `${profile.auth.scheme ?? "Bearer"} ${process.env[profile.auth.env]}` };
+};
+
+const graphqlSecretValues = (profile) => {
+  if (!["bearer", "oauth2"].includes(profile.auth.type) || !profile.auth.env || !process.env[profile.auth.env]) {
+    return [];
+  }
+  const value = process.env[profile.auth.env];
+  return [value, `${profile.auth.scheme ?? "Bearer"} ${value}`];
 };
 
 const graphqlSchema = async (profile) => {
@@ -1308,9 +1323,9 @@ const applyTemplateValues = (urlTemplate, parameters) =>
     urlTemplate,
   );
 
-const responsePreview = async (response) => {
+const responsePreview = async (response, secretValues = []) => {
   const contentType = response.headers.get("content-type") ?? "";
-  const text = await response.text();
+  const text = sanitizeText(await response.text(), secretValues);
   if (contentType.includes("application/json")) {
     try {
       return { json: JSON.parse(text) };
@@ -1368,6 +1383,13 @@ const applyAuthInjections = (url, headers, injections, explicitParameters) => {
   }
 };
 
+const authSecretValues = (injections, explicitParameters) =>
+  injections.flatMap((injection) => [
+    explicitParameters[injection.name],
+    ...templateEnvNames(injection.value_template).map((name) => process.env[name]),
+    explicitParameters[injection.name] === undefined ? renderValueTemplate(injection.value_template) : null,
+  ]);
+
 const redactedUrl = (url, secretQueryNames) => {
   const copy = new URL(url.toString());
   for (const name of secretQueryNames) {
@@ -1413,8 +1435,9 @@ const callOperation = async (packageId, id, args) => {
   }
   applyAuthInjections(url, headers, authInjections, parameters);
   const secretQueryNames = authInjections
-    .filter((injection) => injection.in === "query" && parameters[injection.name] === undefined)
+    .filter((injection) => injection.in === "query")
     .map((injection) => injection.name);
+  const secretValues = authSecretValues(authInjections, parameters);
 
   const request = {
     method: plan.method,
@@ -1436,7 +1459,7 @@ const callOperation = async (packageId, id, args) => {
       status: response.status,
       status_text: response.statusText,
       content_type: response.headers.get("content-type") ?? "",
-      ...(await responsePreview(response)),
+      ...(await responsePreview(response, secretValues)),
     },
   };
 };
@@ -1505,6 +1528,7 @@ const callGraphqlOperation = async (packageId, id, args) => {
     };
   }
 
+  const secretValues = graphqlSecretValues(profile);
   const { response, json, text } = await graphqlRequest(profile.graphqlUrl, { query, variables: parameters }, graphqlAuthHeaders(profile, { requireConfigured: true }));
   return {
     package: packageId,
@@ -1520,8 +1544,8 @@ const callGraphqlOperation = async (packageId, id, args) => {
       status: response.status,
       status_text: response.statusText,
       content_type: response.headers.get("content-type") ?? "",
-      json: json ?? undefined,
-      text: json ? undefined : text.slice(0, 2000),
+      json: json ? sanitizeJson(json, secretValues) : undefined,
+      text: json ? undefined : sanitizeText(text, secretValues).slice(0, 2000),
     },
   };
 };
