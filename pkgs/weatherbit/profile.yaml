@@ -5,6 +5,7 @@ sources:
 auth:
   type: api_key
   env: WEATHERBIT_API_KEY
+  query_param: key
 policy:
   default_write: confirm
 output:

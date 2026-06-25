@@ -64,8 +64,19 @@ const resolveRef = (spec, value) => {
 const readProfile = async (packageId) => {
   assertPackageId(packageId);
   const text = await readFile(new URL("profile.yaml", packageDirectoryUrl(packageId)), "utf8");
+  const sectionScalar = (section, key) => {
+    const match = text.match(new RegExp(`^${section}:\\n(?:  .+\\n)*?  ${key}:\\s*(.+)$`, "m"));
+    return match?.[1]?.trim();
+  };
   const listValues = (key) => {
     const match = text.match(new RegExp(`^  ${key}:\\n((?:    - .+\\n?)+)`, "m"));
+    if (!match) {
+      return [];
+    }
+    return match[1].split("\n").map((line) => line.trim().replace(/^- /, "")).filter(Boolean);
+  };
+  const sectionListValues = (section, key) => {
+    const match = text.match(new RegExp(`^${section}:\\n(?:  .+\\n)*?  ${key}:\\n((?:    - .+\\n?)+)`, "m"));
     if (!match) {
       return [];
     }
@@ -82,6 +93,22 @@ const readProfile = async (packageId) => {
     docsUrl: text.match(/docs_url:\s*(.+)/)?.[1]?.trim(),
     llmsUrl: text.match(/llms_url:\s*(.+)/)?.[1]?.trim(),
     mcpUrl: text.match(/mcp_url:\s*(.+)/)?.[1]?.trim(),
+    auth: {
+      type: sectionScalar("auth", "type") ?? "unknown",
+      env: sectionScalar("auth", "env"),
+      header: sectionScalar("auth", "header"),
+      scheme: sectionScalar("auth", "scheme"),
+      queryParam: sectionScalar("auth", "query_param"),
+      usernameEnv: sectionScalar("auth", "username_env"),
+      passwordEnv: sectionScalar("auth", "password_env"),
+      tokenOperation: sectionScalar("auth", "token_operation"),
+      refreshTokenEnv: sectionScalar("auth", "refresh_token_env"),
+      accessTokenEnv: sectionScalar("auth", "access_token_env"),
+      organizationIdEnv: sectionScalar("auth", "organization_id_env"),
+      tokenResponseField: sectionScalar("auth", "token_response_field"),
+      defaultExpirySeconds: sectionScalar("auth", "default_expiry_seconds"),
+      defaultScopes: sectionListValues("auth", "default_scopes"),
+    },
     text,
   };
 };
@@ -602,6 +629,178 @@ const describeOperation = (specs, id) => {
   };
 };
 
+const securitySchemes = (spec) =>
+  Object.entries({ ...(spec.components?.securitySchemes ?? {}), ...(spec.securityDefinitions ?? {}) })
+    .map(([name, scheme]) => ({
+      name,
+      type: scheme.type,
+      in: scheme.in,
+      name_in_request: scheme.name,
+      scheme: scheme.scheme,
+      flows: scheme.flows ? Object.keys(scheme.flows) : undefined,
+      scopes: scheme.flows
+        ? Object.values(scheme.flows).flatMap((flow) => Object.keys(flow.scopes ?? {})).slice(0, 12)
+        : scheme.scopes ? Object.keys(scheme.scopes).slice(0, 12) : undefined,
+    }));
+
+const authLikeParameters = (specs, auth) =>
+  specs.flatMap(({ spec, source }, specIndex) =>
+    Object.entries(spec.paths ?? {}).flatMap(([path, methods]) =>
+      Object.entries(methods)
+        .filter(([method]) => ["get", "post", "put", "patch", "delete"].includes(method))
+        .flatMap(([method, operation]) =>
+          (operation.parameters ?? [])
+            .map((parameter) => resolveRef(spec, parameter))
+            .filter((parameter) => {
+              const name = parameter.name?.toLowerCase?.() ?? "";
+              const authNames = ["authorization", "api_key", "apikey", "x-api-key"];
+              const required = parameter.required === true;
+              const tokenIsAuth = name === "token" && required;
+              const keyIsAuth = name === "key" && (auth.type === "api_key" || auth.queryParam === "key");
+              return ["header", "query"].includes(parameter.in) && (authNames.includes(name) || tokenIsAuth || keyIsAuth);
+            })
+            .map((parameter) => ({
+              operation: operation.operationId ?? `${method.toUpperCase()} ${path}`,
+              qualified_id: `${specSlug(spec, specIndex)}:${operation.operationId ?? `${method.toUpperCase()} ${path}`}`,
+              source,
+              in: parameter.in,
+              name: parameter.name,
+              required: parameter.required === true,
+              description: parameter.description,
+              confidence: ["authorization", "api_key", "apikey", "x-api-key"].includes(parameter.name?.toLowerCase?.() ?? "") ? "high" : "medium",
+              reason: parameter.name?.toLowerCase?.() === "token" ? "required token parameter" : parameter.name?.toLowerCase?.() === "key" ? "api_key profile uses key parameter" : "standard auth parameter name",
+            })),
+        ),
+    ),
+  );
+
+const authInjectionFromScheme = (scheme, auth) => {
+  if (scheme.type === "http" && scheme.scheme === "bearer") {
+    return { in: "header", name: "Authorization", value_template: `Bearer \${${auth.env ?? "TOKEN"}}` };
+  }
+  if (scheme.type === "http" && scheme.scheme === "basic") {
+    return { in: "header", name: "Authorization", value_template: `Basic base64(\${${auth.usernameEnv ?? "USERNAME"}}:\${${auth.passwordEnv ?? "PASSWORD"}})` };
+  }
+  if (scheme.type === "apiKey") {
+    return { in: scheme.in, name: scheme.name_in_request, value_template: `\${${auth.env ?? "API_KEY"}}` };
+  }
+  if (scheme.type === "oauth2") {
+    return { in: "header", name: "Authorization", value_template: `Bearer \${${auth.env ?? "OAUTH_ACCESS_TOKEN"}}` };
+  }
+  return null;
+};
+
+const profileAuthInjection = (auth) => {
+  if (auth.type === "bearer") {
+    return { in: "header", name: auth.header ?? "Authorization", value_template: `${auth.scheme ?? "Bearer"} \${${auth.env ?? "TOKEN"}}` };
+  }
+  if (auth.type === "api_key") {
+    if (!auth.queryParam && !auth.header) {
+      return null;
+    }
+    return { in: auth.queryParam ? "query" : "header", name: auth.queryParam ?? auth.header, value_template: `\${${auth.env ?? "API_KEY"}}` };
+  }
+  if (auth.type === "basic") {
+    return { in: "header", name: "Authorization", value_template: `Basic base64(\${${auth.usernameEnv ?? "USERNAME"}}:\${${auth.passwordEnv ?? "PASSWORD"}})` };
+  }
+  if (auth.type === "oauth2") {
+    return { in: "header", name: "Authorization", value_template: `Bearer \${${auth.env ?? "OAUTH_ACCESS_TOKEN"}}` };
+  }
+  return null;
+};
+
+const authParameterValueTemplate = (auth, parameter) => {
+  const name = parameter.name.toLowerCase();
+  if (name === "authorization" && auth.type === "basic") {
+    return `Basic base64(\${${auth.usernameEnv ?? "USERNAME"}}:\${${auth.passwordEnv ?? "PASSWORD"}})`;
+  }
+  if (name === "authorization" && ["bearer", "oauth2", "token_exchange"].includes(auth.type)) {
+    return `${auth.scheme ?? "Bearer"} \${${auth.env ?? auth.accessTokenEnv ?? "TOKEN"}}`;
+  }
+  return `\${${auth.env ?? auth.accessTokenEnv ?? "TOKEN"}}`;
+};
+
+const tokenParameterInjections = (auth, parameters) =>
+  [...new Map(parameters
+    .filter((parameter) => ["header", "query"].includes(parameter.in))
+    .map((parameter) => [`${parameter.in}:${parameter.name}`, parameter]))
+    .values()]
+    .map((parameter) => ({
+      in: parameter.in,
+      name: parameter.name,
+      value_template: authParameterValueTemplate(auth, parameter),
+      applies_when_operation_has_parameter: true,
+    }));
+
+const authPlan = async (packageId) => {
+  const profile = await readProfile(packageId);
+  if (profile.graphqlUrl) {
+    return {
+      package: packageId,
+      status: "adapter_needed",
+      source: "graphql",
+      profile_auth: profile.auth,
+      runtime: profileAuthInjection(profile.auth) ? {
+        mode: profile.auth.type,
+        default_injection: profileAuthInjection(profile.auth),
+      } : null,
+      gaps: ["GraphQL introspection and operation planning are not implemented yet."],
+    };
+  }
+
+  const specs = await fetchPackageSpecs(packageId);
+  const schemes = specs.flatMap(({ spec, source }) => securitySchemes(spec).map((scheme) => ({ ...scheme, source })));
+  const parameters = authLikeParameters(specs, profile.auth);
+  const schemeInjection = schemes.map((scheme) => authInjectionFromScheme(scheme, profile.auth)).find(Boolean);
+  const defaultInjection = profileAuthInjection(profile.auth) ?? schemeInjection;
+  const tokenOperation = profile.auth.tokenOperation ? requestPlan(specs, profile.auth.tokenOperation) : null;
+  const gaps = [
+    profile.auth.type === "unknown" && schemes.length > 0 ? "Profile auth type is unknown; detected machine-readable auth schemes." : null,
+    profile.auth.type !== "unknown" && !defaultInjection && profile.auth.type !== "token_exchange" ? "Profile auth type is set but runtime injection is incomplete." : null,
+    profile.auth.type === "basic" && (!profile.auth.usernameEnv || !profile.auth.passwordEnv) ? "Basic auth needs username_env and password_env in the profile." : null,
+    profile.auth.type === "api_key" && !profile.auth.env ? "API key auth needs env in the profile." : null,
+    profile.auth.type === "bearer" && !profile.auth.env ? "Bearer auth needs env in the profile." : null,
+    profile.auth.type === "oauth2" && !profile.auth.env ? "OAuth2 auth needs env in the profile for an already-issued access token." : null,
+    profile.auth.type === "token_exchange" && !profile.auth.tokenOperation ? "Token exchange auth needs token_operation in the profile." : null,
+  ].filter(Boolean);
+
+  return {
+    package: packageId,
+    status: gaps.length === 0 ? "ready" : "needs_profile_detail",
+    source: profile.apisGuru ? "apis.guru" : specs.length > 1 ? "openapi_urls" : "openapi_url",
+    profile_auth: profile.auth,
+    detected: {
+      security_schemes: schemes,
+      auth_parameters: parameters.slice(0, 25),
+    },
+    runtime: {
+      mode: profile.auth.type === "unknown" && schemeInjection ? "detected_from_spec" : profile.auth.type,
+      default_injection: profile.auth.type === "token_exchange" ? null : defaultInjection,
+      parameter_injections: tokenParameterInjections(profile.auth, parameters),
+      token_exchange: profile.auth.type === "token_exchange" ? {
+        operation: profile.auth.tokenOperation,
+        request: tokenOperation,
+        refresh_token_env: profile.auth.refreshTokenEnv,
+        access_token_env: profile.auth.accessTokenEnv,
+        organization_id_env: profile.auth.organizationIdEnv,
+        default_expiry_seconds: profile.auth.defaultExpirySeconds ? Number.parseInt(profile.auth.defaultExpirySeconds, 10) : undefined,
+        default_scopes: profile.auth.defaultScopes,
+        token_response_field: profile.auth.tokenResponseField ?? "token",
+        request_injection: profile.auth.refreshTokenEnv ? {
+          in: "header",
+          name: "Authorization",
+          value_template: `${profile.auth.scheme ?? "Bearer"} \${${profile.auth.refreshTokenEnv}}`,
+        } : undefined,
+      } : undefined,
+    },
+    exceptions: [
+      parameters.length > 0 ? "Some operations model auth as explicit parameters; inject these per operation before falling back to securitySchemes." : null,
+      schemes.some((scheme) => scheme.type === "oauth2") && profile.auth.type === "bearer" ? "OAuth scope metadata is present, but the local runtime can use an already-issued bearer token from env." : null,
+    ].filter(Boolean),
+    gaps,
+  };
+};
+
 const serverUrl = (spec) => spec.servers?.[0]?.url ?? "";
 
 const joinUrlTemplate = (baseUrl, path) => `${baseUrl.replace(/\/+$/, "")}/${path.replace(/^\/+/, "")}`;
@@ -883,6 +1082,9 @@ const main = async () => {
   }
   if (command === "plan-call") {
     return requestPlan(await fetchPackageSpecs(packageIdOrQuery), restArgs.join(" "));
+  }
+  if (command === "plan-auth") {
+    return authPlan(packageIdOrQuery);
   }
   if (command === "gaps") {
     const results = await Promise.all((await packageIds()).map(validateProfile));

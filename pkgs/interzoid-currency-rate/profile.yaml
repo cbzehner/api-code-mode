@@ -5,6 +5,7 @@ sources:
 auth:
   type: api_key
   env: INTERZOID_API_KEY
+  query_param: license
 policy:
   default_write: confirm
 output:

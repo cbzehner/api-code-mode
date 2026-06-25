@@ -9,8 +9,15 @@ sources:
     - https://docs.cable.tech/openapi/customer-data-api.json
     - https://docs.cable.tech/openapi/transaction-data-api.json
 auth:
-  type: bearer
-  env: CABLE_API_TOKEN
+  type: token_exchange
+  refresh_token_env: CABLE_AUTH_TOKEN
+  access_token_env: CABLE_API_TOKEN
+  organization_id_env: CABLE_ORGANIZATION_ID
+  token_operation: api-reference:request-token
+  token_response_field: token
+  default_expiry_seconds: 86400
+  default_scopes:
+    - transactions:read
 policy:
   default_write: confirm
 output:

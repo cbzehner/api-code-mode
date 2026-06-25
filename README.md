@@ -33,11 +33,12 @@ npm run bootstrap-prompt -- cable
 npm run bootstrap-agent -- cable --runner gemini --timeout-ms 120000
 npm run discover-sources -- cable
 npm run discover-sources -- https://docs.cable.tech/
-npm run discover-apply -- cable --candidate openapi_urls-1
+npm run discover-apply -- cable --candidate openapi_urls-<hash>
 npm run search -- github
 npm run ops -- github
 npm run ops -- stripe customer
 npm run describe -- github apps/delete-installation
+npm run plan-auth -- slack
 npm run plan-call -- github apps/delete-installation
 npm run validate
 npm run gaps
@@ -70,6 +71,14 @@ OpenAPI index pages. It also follows likely docs/API/developer links from a
 homepage and probes common subdomains such as `docs.*` and `api.*`.
 `discover-apply` writes one selected candidate into a profile and reruns
 validation.
+
+## Auth Planning
+
+`plan-auth` combines profile auth fields, OpenAPI security schemes, and
+auth-looking operation parameters into one JSON runtime plan. Standard cases
+produce header/query/basic/OAuth injection templates. Weird cases stay
+declarative: Slack exposes required `token` operation parameters, and Cable
+uses a token-exchange operation before access-token calls.
 
 ## Validation Set
 

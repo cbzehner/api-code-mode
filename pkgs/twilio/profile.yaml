@@ -4,6 +4,8 @@ sources:
   apis_guru: twilio.com:api
 auth:
   type: basic
+  username_env: TWILIO_ACCOUNT_SID
+  password_env: TWILIO_AUTH_TOKEN
 policy:
   default_write: confirm
 output:

@@ -3,8 +3,9 @@ name: BulkSMS
 sources:
   apis_guru: bulksms.com
 auth:
-  type: unknown
-  env: BULKSMS_TOKEN
+  type: basic
+  username_env: BULKSMS_USERNAME
+  password_env: BULKSMS_PASSWORD
 policy:
   default_write: confirm
 output:

@@ -4,6 +4,7 @@ sources:
   apis_guru: googleapis.com:gmail
 auth:
   type: oauth2
+  env: GOOGLE_OAUTH_ACCESS_TOKEN
 policy:
   default_write: confirm
 output:

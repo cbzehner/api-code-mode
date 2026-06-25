@@ -14,6 +14,7 @@ api-code-mode discover-apply <package> --candidate <id>
 api-code-mode search <query>
 api-code-mode ops <package> [query]
 api-code-mode describe <package> <operation-id>
+api-code-mode plan-auth <package>
 api-code-mode plan-call <package> <operation-id>
 api-code-mode validate [package]
 api-code-mode gaps
@@ -47,6 +48,34 @@ sources:
 Only `apis_guru`, `openapi_url`, and `openapi_urls` are executable today.
 `graphql_url`, `docs_url`, `llms_url`, and `mcp_url` are discovery/adapter
 inputs until adapters exist.
+
+Supported auth fields:
+
+```yaml
+auth:
+  type: bearer | api_key | basic | oauth2 | token_exchange | unknown
+  env: PROVIDER_TOKEN
+  header: Authorization
+  scheme: Bearer
+  query_param: key
+  username_env: PROVIDER_USERNAME
+  password_env: PROVIDER_PASSWORD
+  token_operation: api-reference:request-token
+  refresh_token_env: PROVIDER_REFRESH_TOKEN
+  access_token_env: PROVIDER_ACCESS_TOKEN
+  organization_id_env: PROVIDER_ORGANIZATION_ID
+  token_response_field: token
+  default_expiry_seconds: 86400
+  default_scopes:
+    - resource:read
+```
+
+`plan-auth <package>` returns a structured auth plan. It combines profile auth
+facts, OpenAPI security schemes, and auth-looking operation parameters. Operation
+parameters named like `token`, `key`, or `Authorization` are reported as
+parameter injections because APIs such as Slack model auth there even when OAuth
+scope metadata is also present. Inferred auth parameters include confidence and
+reason fields because name-based detection is a heuristic.
 
 ## Validation Statuses
 

@@ -22,6 +22,10 @@ npm run discover-apply -- smoke-cable-discovery --candidate "$cable_candidate_id
 npm run ops -- stripe customer >/tmp/api-code-mode-stripe-customer.json
 npm run plan-call -- github apps/delete-installation >/tmp/api-code-mode-github-delete-plan.json
 npm run plan-call -- google-sheets sheets.spreadsheets.values.get >/tmp/api-code-mode-sheets-get-plan.json
+npm run plan-auth -- cable >/tmp/api-code-mode-cable-auth-plan.json
+npm run plan-auth -- slack >/tmp/api-code-mode-slack-auth-plan.json
+npm run plan-auth -- sms77 >/tmp/api-code-mode-sms77-auth-plan.json
+npm run plan-auth -- twilio >/tmp/api-code-mode-twilio-auth-plan.json
 
 node -e '
 const fs = require("fs");
@@ -34,6 +38,10 @@ const bootstrapNew = JSON.parse(fs.readFileSync("/tmp/api-code-mode-bootstrap-ne
 const cableDiscovery = JSON.parse(fs.readFileSync("/tmp/api-code-mode-cable-discovery-sources.json", "utf8").split("\n").slice(3).join("\n"));
 const cableApply = JSON.parse(fs.readFileSync("/tmp/api-code-mode-cable-discovery-apply.json", "utf8").split("\n").slice(3).join("\n"));
 const sheetsPlan = JSON.parse(fs.readFileSync("/tmp/api-code-mode-sheets-get-plan.json", "utf8").split("\n").slice(3).join("\n"));
+const cableAuthPlan = JSON.parse(fs.readFileSync("/tmp/api-code-mode-cable-auth-plan.json", "utf8").split("\n").slice(3).join("\n"));
+const slackAuthPlan = JSON.parse(fs.readFileSync("/tmp/api-code-mode-slack-auth-plan.json", "utf8").split("\n").slice(3).join("\n"));
+const sms77AuthPlan = JSON.parse(fs.readFileSync("/tmp/api-code-mode-sms77-auth-plan.json", "utf8").split("\n").slice(3).join("\n"));
+const twilioAuthPlan = JSON.parse(fs.readFileSync("/tmp/api-code-mode-twilio-auth-plan.json", "utf8").split("\n").slice(3).join("\n"));
 
 if (validate.filter((result) => result.status === "ok").length !== 14) {
   throw new Error("expected 14 package profiles to validate");
@@ -61,6 +69,18 @@ if (cableApply.validation.status !== "ok") {
 }
 if (sheetsPlan.url_template.includes("//v4")) {
   throw new Error("expected normalized Google Sheets URL template");
+}
+if (cableAuthPlan.runtime.token_exchange?.operation !== "api-reference:request-token") {
+  throw new Error("expected Cable auth plan to include token exchange operation");
+}
+if (!slackAuthPlan.runtime.parameter_injections.some((injection) => injection.name === "token")) {
+  throw new Error("expected Slack auth plan to include token parameter injection");
+}
+if (sms77AuthPlan.runtime.default_injection?.name !== "X-API-Key") {
+  throw new Error("expected sms77 auth plan to use OpenAPI X-API-Key header");
+}
+if (!twilioAuthPlan.runtime.default_injection?.value_template.includes("TWILIO_ACCOUNT_SID")) {
+  throw new Error("expected Twilio auth plan to use configured basic auth envs");
 }
 '
 
