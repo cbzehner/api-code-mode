@@ -66,8 +66,10 @@ See `docs/self-healing.md` for the target `bootstrap-agent` flow.
 
 `discover-sources` finds machine-readable sources without writing files. It
 checks APIs.guru, common OpenAPI/Swagger paths, `llms.txt`, docs MCP links, and
-OpenAPI index pages. `discover-apply` writes one selected candidate into a
-profile and reruns validation.
+OpenAPI index pages. It also follows likely docs/API/developer links from a
+homepage and probes common subdomains such as `docs.*` and `api.*`.
+`discover-apply` writes one selected candidate into a profile and reruns
+validation.
 
 ## Validation Set
 

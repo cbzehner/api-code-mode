@@ -222,6 +222,43 @@ const htmlLinks = (baseUrl, text) =>
 
 const looksLikeSpecUrl = (url) => /\.(json|ya?ml)(?:[?#].*)?$/i.test(url) && /openapi|swagger|api/i.test(url);
 
+const baseDomain = (hostname) => hostname.replace(/^www\./, "").split(".").slice(-2).join(".");
+
+const likelyDiscoveryUrl = (url, parentHostname) => {
+  const parsed = maybeUrl(url);
+  if (!parsed) {
+    return false;
+  }
+  const parentBase = baseDomain(parentHostname);
+  if (!parsed.hostname.endsWith(parentBase)) {
+    return false;
+  }
+  return /docs?|api|developers?|reference/i.test(`${parsed.hostname} ${parsed.pathname}`);
+};
+
+const commonSubdomainOrigins = (origin) => {
+  const parsed = maybeUrl(origin);
+  if (!parsed) {
+    return [];
+  }
+  const domain = baseDomain(parsed.hostname);
+  return ["docs", "api", "developer", "developers"].map((subdomain) => `${parsed.protocol}//${subdomain}.${domain}`);
+};
+
+const discoverLinkedOrigins = async (origins) => {
+  const linkedOrigins = [];
+  for (const origin of origins) {
+    const parsed = maybeUrl(origin);
+    const response = await readText(origin);
+    if (!parsed || !response.ok || !response.contentType.includes("text/html")) {
+      continue;
+    }
+    const links = htmlLinks(response.url, response.text).filter((link) => likelyDiscoveryUrl(link, parsed.hostname));
+    linkedOrigins.push(...links.map((link) => maybeUrl(link)?.origin));
+  }
+  return unique(linkedOrigins);
+};
+
 const validateOpenApiUrl = async (url) => {
   const response = await readText(url);
   if (!response.ok) {
@@ -360,7 +397,13 @@ const discoverSources = async (input) => {
     }
   }
 
-  const rootUrls = unique(context.urls.map((value) => maybeUrl(value)?.origin).filter(Boolean));
+  const directRootUrls = unique(context.urls.map((value) => maybeUrl(value)?.origin).filter(Boolean));
+  const linkedRootUrls = await discoverLinkedOrigins(directRootUrls);
+  const rootUrls = unique([
+    ...directRootUrls,
+    ...linkedRootUrls,
+    ...directRootUrls.flatMap(commonSubdomainOrigins),
+  ]);
   const probeUrls = unique([
     ...context.urls.filter(looksLikeSpecUrl),
     ...rootUrls.flatMap((origin) => [

@@ -80,7 +80,8 @@ Multi-spec packages should expose `qualified_id` values in the form
 
 `discover-sources` returns structured JSON candidates. It must not write files.
 The deterministic pipeline checks APIs.guru, common OpenAPI/Swagger paths,
-`llms.txt`, MCP links, and OpenAPI index pages.
+`llms.txt`, MCP links, likely docs/developer/API links from homepages, common
+`docs.*`/`api.*`/`developer.*` subdomains, and OpenAPI index pages.
 
 `discover-apply` is the only discovery command that writes profile changes. It
 recomputes candidates, applies the selected candidate to `sources`, and returns

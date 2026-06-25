@@ -6,6 +6,7 @@ rm -rf pkgs/smoke-api-code-mode pkgs/smoke-cable-discovery
 npm run validate >/tmp/api-code-mode-validate.json
 npm run gaps >/tmp/api-code-mode-gaps.json
 npm run discover-sources -- github.com >/tmp/api-code-mode-github-discovery.json
+npm run discover-sources -- cable.tech >/tmp/api-code-mode-cable-domain-discovery.json
 npm run bootstrap-prompt -- cable >/tmp/api-code-mode-cable-bootstrap.json
 npm run bootstrap-new -- smoke-api-code-mode --name "Smoke API" --docs-url https://example.com/docs >/tmp/api-code-mode-bootstrap-new.json
 npm run bootstrap-new -- smoke-cable-discovery --name "Smoke Cable Discovery" --docs-url https://docs.cable.tech/ >/tmp/api-code-mode-cable-discovery-new.json
@@ -27,6 +28,7 @@ const fs = require("fs");
 const validate = JSON.parse(fs.readFileSync("/tmp/api-code-mode-validate.json", "utf8").split("\n").slice(3).join("\n"));
 const gaps = JSON.parse(fs.readFileSync("/tmp/api-code-mode-gaps.json", "utf8").split("\n").slice(3).join("\n"));
 const githubDiscovery = JSON.parse(fs.readFileSync("/tmp/api-code-mode-github-discovery.json", "utf8").split("\n").slice(3).join("\n"));
+const cableDomainDiscovery = JSON.parse(fs.readFileSync("/tmp/api-code-mode-cable-domain-discovery.json", "utf8").split("\n").slice(3).join("\n"));
 const cableBootstrap = JSON.parse(fs.readFileSync("/tmp/api-code-mode-cable-bootstrap.json", "utf8").split("\n").slice(3).join("\n"));
 const bootstrapNew = JSON.parse(fs.readFileSync("/tmp/api-code-mode-bootstrap-new.json", "utf8").split("\n").slice(3).join("\n"));
 const cableDiscovery = JSON.parse(fs.readFileSync("/tmp/api-code-mode-cable-discovery-sources.json", "utf8").split("\n").slice(3).join("\n"));
@@ -41,6 +43,9 @@ if (gaps.length !== 1) {
 }
 if (!githubDiscovery.candidates.some((candidate) => candidate.type === "apis_guru")) {
   throw new Error("expected GitHub discovery to find an APIs.guru candidate");
+}
+if (!cableDomainDiscovery.candidates.some((candidate) => candidate.type === "openapi_urls" || candidate.type === "openapi_url")) {
+  throw new Error("expected Cable domain discovery to find OpenAPI candidates");
 }
 if (!cableBootstrap.prompt.includes("pkgs/cable/profile.yaml")) {
   throw new Error("expected bootstrap prompt to scope edits to the cable profile");
