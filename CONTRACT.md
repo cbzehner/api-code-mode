@@ -5,6 +5,12 @@ Rust.
 
 ## Commands
 
+Public commands must be named for the user or agent's goal, not for internal
+implementation phases. A command belongs in public help only when a human or LLM
+would naturally ask to do that thing. Discovery, auth planning, request planning,
+validation, and bootstrap repair are private diagnostics unless they become
+directly useful workflows.
+
 ```bash
 api-code-mode help
 api-code-mode generate <domain-or-url>

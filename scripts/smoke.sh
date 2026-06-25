@@ -52,8 +52,10 @@ const cableScopedOps = JSON.parse(fs.readFileSync("/tmp/api-code-mode-cable-scop
 if (!help.commands.some((command) => command.command === "generate <domain-or-url>")) {
   throw new Error("expected public help to include generate");
 }
-if (JSON.stringify(help).includes("discover-sources") || JSON.stringify(help).includes("plan-auth") || JSON.stringify(help).includes("plan-call")) {
-  throw new Error("expected public help to hide private diagnostic commands");
+for (const internalName of ["discover-sources", "plan-auth", "plan-call", "validate", "bootstrap"]) {
+  if (JSON.stringify(help).includes(internalName)) {
+    throw new Error(`expected public help to hide internal surface: ${internalName}`);
+  }
 }
 if (generateCable.package !== "cable" || generateCable.status !== "ready") {
   throw new Error("expected generate cable.tech to produce ready cable package");

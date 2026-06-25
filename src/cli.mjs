@@ -22,7 +22,7 @@ const publicHelp = () => ({
   commands: [
     {
       command: "generate <domain-or-url>",
-      description: "Discover sources, create a package profile, validate it, and prepare auth/call planning.",
+      description: "Turn public API docs into a local package that agents can search and inspect.",
       examples: ["api-code-mode generate cable.tech", "api-code-mode generate https://docs.cable.tech/"],
     },
     {
@@ -37,7 +37,7 @@ const publicHelp = () => ({
     },
   ],
   notes: [
-    "Lower-level discovery, planning, auth, bootstrap, and validation commands are available for agents and maintainers but hidden from public help.",
+    "Advanced diagnostic commands are available for agents and maintainers but hidden from public help.",
     "The spike plans calls but does not execute arbitrary API calls yet.",
   ],
 });

@@ -27,6 +27,11 @@ progressive discovery loop.
 
 ## Public Flow
 
+Public commands are named for what a human or LLM is trying to do, not for the
+runtime phase that implements it. `generate`, `ops`, and `describe` are public;
+source discovery, auth planning, request planning, validation, and bootstrap
+repair stay private diagnostics.
+
 ```bash
 npm run help
 npm run generate -- cable.tech
