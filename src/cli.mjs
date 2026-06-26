@@ -723,6 +723,15 @@ const discoverSources = async (input) => {
         url: exactMatch.spec,
         evidence: [{ source: API_INDEX_URL, detail: `matched APIs.guru entry ${exactMatch.name}` }],
       }));
+      if (!context.urls.some(looksLikeSpecUrl) && !context.graphqlUrl) {
+        return {
+          input,
+          package: context.package,
+          status: "candidates_found",
+          candidates,
+          evidence,
+        };
+      }
     }
   }
 

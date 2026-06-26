@@ -13,6 +13,7 @@ npm run generate -- cable.tech >/tmp/api-code-mode-generate-cable.json
 npm run validate >/tmp/api-code-mode-validate.json
 npm run gaps >/tmp/api-code-mode-gaps.json
 npm run discover-sources -- github.com >/tmp/api-code-mode-github-discovery.json
+npm run discover-sources -- postmarkapp.com >/tmp/api-code-mode-postmark-discovery.json
 npm run discover-sources -- cable.tech >/tmp/api-code-mode-cable-domain-discovery.json
 node src/cli.mjs discover-sources developer.atlassian.com >/tmp/api-code-mode-atlassian-discovery.json
 npm run bootstrap-prompt -- cable >/tmp/api-code-mode-cable-bootstrap.json
@@ -62,6 +63,7 @@ const generateCable = JSON.parse(fs.readFileSync("/tmp/api-code-mode-generate-ca
 const validate = JSON.parse(fs.readFileSync("/tmp/api-code-mode-validate.json", "utf8").split("\n").slice(3).join("\n"));
 const gaps = JSON.parse(fs.readFileSync("/tmp/api-code-mode-gaps.json", "utf8").split("\n").slice(3).join("\n"));
 const githubDiscovery = JSON.parse(fs.readFileSync("/tmp/api-code-mode-github-discovery.json", "utf8").split("\n").slice(3).join("\n"));
+const postmarkDiscovery = JSON.parse(fs.readFileSync("/tmp/api-code-mode-postmark-discovery.json", "utf8").split("\n").slice(3).join("\n"));
 const cableDomainDiscovery = JSON.parse(fs.readFileSync("/tmp/api-code-mode-cable-domain-discovery.json", "utf8").split("\n").slice(3).join("\n"));
 const atlassianDiscovery = JSON.parse(fs.readFileSync("/tmp/api-code-mode-atlassian-discovery.json", "utf8"));
 const cableBootstrap = JSON.parse(fs.readFileSync("/tmp/api-code-mode-cable-bootstrap.json", "utf8").split("\n").slice(3).join("\n"));
@@ -140,6 +142,9 @@ if (gaps.length !== 0) {
 }
 if (!githubDiscovery.candidates.some((candidate) => candidate.type === "apis_guru")) {
   throw new Error("expected GitHub discovery to find an APIs.guru candidate");
+}
+if (!postmarkDiscovery.candidates.some((candidate) => candidate.type === "apis_guru" && candidate.apis_guru.startsWith("postmarkapp.com"))) {
+  throw new Error("expected Postmark discovery to use exact APIs.guru candidate without deep probing");
 }
 if (!cableDomainDiscovery.candidates.some((candidate) => candidate.type === "openapi_urls" || candidate.type === "openapi_url")) {
   throw new Error("expected Cable domain discovery to find OpenAPI candidates");
