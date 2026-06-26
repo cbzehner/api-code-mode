@@ -1,7 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-rm -rf pkgs/smoke-api-code-mode pkgs/smoke-cable-discovery
+cleanup() {
+  rm -rf pkgs/smoke-api-code-mode pkgs/smoke-cable-discovery
+}
+trap cleanup EXIT
+
+cleanup
 
 npm run help >/tmp/api-code-mode-help.json
 npm run generate -- cable.tech >/tmp/api-code-mode-generate-cable.json
@@ -170,7 +175,5 @@ if (!twilioAuthPlan.runtime.default_injection?.value_template.includes("TWILIO_A
   throw new Error("expected Twilio auth plan to use configured basic auth envs");
 }
 '
-
-rm -rf pkgs/smoke-api-code-mode pkgs/smoke-cable-discovery
 
 echo "smoke ok"

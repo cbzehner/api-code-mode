@@ -127,14 +127,15 @@ The first `pkgs/` set intentionally mixes API styles:
 For broader coverage, run:
 
 ```bash
-npm run generate-matrix
+npm run generate-matrix -- --concurrency 4
 npm run matrix
 ```
 
 `generate-matrix` starts from public domains/URLs, runs the public `generate`
 flow, checks the generated package with `ops` and `describe`, and removes
-temporary packages it created. The configured matrix creates temporary
-`pkgs/matrix-*` profiles from
+temporary packages it created. Use `--concurrency N` and `--timeout-ms N` to
+tune the dynamic run without changing fixtures. The configured matrix creates
+temporary `pkgs/matrix-*` profiles from
 `test-fixtures/api-matrix.json`, exercises validate/ops/describe/read-only
 dry-run through the normal CLI, reports edge cases as JSON, and removes the
 temporary profiles. The dynamic fixture covers 31 inputs and reports slow

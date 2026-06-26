@@ -4,8 +4,15 @@ import { spawn } from "node:child_process";
 const root = new URL("../", import.meta.url);
 const fixtureUrl = new URL("../test-fixtures/generate-matrix.json", import.meta.url);
 const targets = JSON.parse(await readFile(fixtureUrl, "utf8")).targets;
-const selected = process.argv.slice(2);
+const rawArgs = process.argv.slice(2);
+const flagValue = (name, defaultValue) => {
+  const index = rawArgs.indexOf(name);
+  return index === -1 ? defaultValue : rawArgs[index + 1];
+};
+const selected = rawArgs.filter((arg, index) => !arg.startsWith("--") && !rawArgs[index - 1]?.startsWith("--"));
 const selectedTargets = selected.length > 0 ? targets.filter((target) => selected.includes(target.id)) : targets;
+const concurrency = Math.max(1, Number.parseInt(flagValue("--concurrency", "4"), 10));
+const commandTimeoutMs = Math.max(1000, Number.parseInt(flagValue("--timeout-ms", "60000"), 10));
 
 const packageUrl = (packageId) => new URL(`../pkgs/${packageId}/`, import.meta.url);
 
@@ -17,7 +24,7 @@ const parseJson = (text) => {
   }
 };
 
-const runCli = (args, timeoutMs = 60000) =>
+const runCli = (args, timeoutMs = commandTimeoutMs) =>
   new Promise((resolve) => {
     const child = spawn(process.execPath, ["src/cli.mjs", ...args], { cwd: root, shell: false });
     let stdout = "";
@@ -126,27 +133,42 @@ const validateGeneratedPackage = async (target) => {
   };
 };
 
-const main = async () => {
+const validateWithSnapshot = async (target) => {
   const snapshots = new Map();
-  const results = [];
   try {
-    for (const target of selectedTargets) {
-      const expectedPackage = target.package ?? target.id;
-      if (!snapshots.has(expectedPackage)) {
-        snapshots.set(expectedPackage, await readProfileText(expectedPackage));
-      }
-      const result = await validateGeneratedPackage(target);
-      if (result.package && !snapshots.has(result.package)) {
-        snapshots.set(result.package, await readProfileText(result.package));
-      }
-      results.push(result);
+    const expectedPackage = target.package ?? target.id;
+    snapshots.set(expectedPackage, await readProfileText(expectedPackage));
+    const result = await validateGeneratedPackage(target);
+    if (result.package && !snapshots.has(result.package)) {
+      snapshots.set(result.package, await readProfileText(result.package));
     }
+    return result;
   } finally {
     await restoreProfiles(snapshots);
   }
+};
+
+const runLimited = async (items, limit, worker) => {
+  const results = new Array(items.length);
+  let nextIndex = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (nextIndex < items.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      results[index] = await worker(items[index]);
+    }
+  });
+  await Promise.all(workers);
+  return results;
+};
+
+const main = async () => {
+  const results = await runLimited(selectedTargets, concurrency, validateWithSnapshot);
 
   const summary = {
     total: results.length,
+    concurrency,
+    timeout_ms: commandTimeoutMs,
     ok: results.filter((result) => result.status === "ok").length,
     failed: results.filter((result) => result.status === "failed").length,
     gaps: results.filter((result) => result.status !== "ok").length,
