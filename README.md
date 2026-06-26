@@ -137,9 +137,10 @@ temporary packages it created. The configured matrix creates temporary
 `pkgs/matrix-*` profiles from
 `test-fixtures/api-matrix.json`, exercises validate/ops/describe/read-only
 dry-run through the normal CLI, reports edge cases as JSON, and removes the
-temporary profiles. The current fixture covers 41 APIs across OpenAPI,
-Swagger 2.0, GraphQL, bearer/API-key/basic/OAuth auth, missing server metadata,
-and POST-only APIs.
+temporary profiles. The dynamic fixture covers 31 inputs and reports slow
+discovery as `timeout` gaps; the configured fixture covers 41 APIs across
+OpenAPI, Swagger 2.0, GraphQL, bearer/API-key/basic/OAuth auth, missing server
+metadata, and POST-only APIs.
 
 ## Why Not A Mega-MCP?
 

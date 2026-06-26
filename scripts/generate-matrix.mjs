@@ -1,4 +1,4 @@
-import { readFile, rm } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
 
 const root = new URL("../", import.meta.url);
@@ -56,20 +56,26 @@ const runCli = (args, timeoutMs = 60000) =>
     });
   });
 
-const profileExists = async (packageId) => {
+const readProfileText = async (packageId) => {
   try {
-    await readFile(new URL("profile.yaml", packageUrl(packageId)), "utf8");
-    return true;
+    return await readFile(new URL("profile.yaml", packageUrl(packageId)), "utf8");
   } catch (error) {
     if (error.code === "ENOENT") {
-      return false;
+      return null;
     }
     throw error;
   }
 };
 
-const cleanup = async (createdPackages) => {
-  await Promise.all([...createdPackages].map((packageId) => rm(packageUrl(packageId), { recursive: true, force: true })));
+const restoreProfiles = async (snapshots) => {
+  await Promise.all([...snapshots.entries()].map(async ([packageId, text]) => {
+    if (text === null) {
+      await rm(packageUrl(packageId), { recursive: true, force: true });
+      return;
+    }
+    await mkdir(packageUrl(packageId), { recursive: true });
+    await writeFile(new URL("profile.yaml", packageUrl(packageId)), text);
+  }));
 };
 
 const firstInspectableOperation = (operations) =>
@@ -78,7 +84,7 @@ const firstInspectableOperation = (operations) =>
 const validateGeneratedPackage = async (target) => {
   const generated = await runCli(["generate", target.input]);
   if (generated.code !== 0) {
-    return { id: target.id, input: target.input, status: "failed", stage: "generate", error: generated.stderr_json };
+    return { id: target.id, input: target.input, status: generated.timed_out ? "timeout" : "failed", stage: "generate", error: generated.stderr_json, timed_out: generated.timed_out };
   }
 
   const result = generated.stdout_json;
@@ -99,13 +105,13 @@ const validateGeneratedPackage = async (target) => {
 
   const ops = await runCli([result.package, "ops"]);
   if (ops.code !== 0 || !Array.isArray(ops.stdout_json) || ops.stdout_json.length === 0) {
-    return { id: target.id, input: target.input, package: result.package, status: "failed", stage: "ops", error: ops.stderr_json };
+    return { id: target.id, input: target.input, package: result.package, status: ops.timed_out ? "timeout" : "failed", stage: "ops", error: ops.stderr_json, timed_out: ops.timed_out };
   }
 
   const operation = firstInspectableOperation(ops.stdout_json);
   const describe = await runCli([result.package, "describe", operation.qualified_id]);
   if (describe.code !== 0) {
-    return { id: target.id, input: target.input, package: result.package, status: "failed", stage: "describe", operation: operation.qualified_id, error: describe.stderr_json };
+    return { id: target.id, input: target.input, package: result.package, status: describe.timed_out ? "timeout" : "failed", stage: "describe", operation: operation.qualified_id, error: describe.stderr_json, timed_out: describe.timed_out };
   }
 
   return {
@@ -121,20 +127,22 @@ const validateGeneratedPackage = async (target) => {
 };
 
 const main = async () => {
-  const createdPackages = new Set();
+  const snapshots = new Map();
   const results = [];
   try {
     for (const target of selectedTargets) {
-      const before = await profileExists(target.id);
+      const expectedPackage = target.package ?? target.id;
+      if (!snapshots.has(expectedPackage)) {
+        snapshots.set(expectedPackage, await readProfileText(expectedPackage));
+      }
       const result = await validateGeneratedPackage(target);
-      const after = result.package ? await profileExists(result.package) : false;
-      if (after && !before && !target.keep_existing) {
-        createdPackages.add(result.package);
+      if (result.package && !snapshots.has(result.package)) {
+        snapshots.set(result.package, await readProfileText(result.package));
       }
       results.push(result);
     }
   } finally {
-    await cleanup(createdPackages);
+    await restoreProfiles(snapshots);
   }
 
   const summary = {
