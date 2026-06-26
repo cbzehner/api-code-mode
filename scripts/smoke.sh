@@ -2,11 +2,31 @@
 set -euo pipefail
 
 cleanup() {
-  rm -rf pkgs/smoke-api-code-mode pkgs/smoke-cable-discovery
+  rm -rf pkgs/smoke-api-code-mode pkgs/smoke-cable-discovery pkgs/smoke-read-post
 }
 trap cleanup EXIT
 
 cleanup
+
+mkdir -p pkgs/smoke-read-post
+cat >pkgs/smoke-read-post/profile.yaml <<'YAML'
+id: smoke-read-post
+name: Smoke Read POST
+sources:
+  apis_guru: plaid.com
+auth:
+  type: api_key
+  header_env:
+    PLAID-CLIENT-ID: SMOKE_PLAID_CLIENT_ID
+    PLAID-SECRET: SMOKE_PLAID_SECRET
+    Plaid-Version: SMOKE_PLAID_VERSION
+policy:
+  default_write: confirm
+  read_operations:
+    - accountsBalanceGet
+output:
+  default_format: json
+YAML
 
 npm run help >/tmp/api-code-mode-help.json
 npm run generate -- cable.tech >/tmp/api-code-mode-generate-cable.json
@@ -40,11 +60,23 @@ node src/cli.mjs github call github-v3-rest-api:meta/root >/tmp/api-code-mode-gi
 node src/cli.mjs countries ops >/tmp/api-code-mode-countries-ops.json
 node src/cli.mjs countries describe query:countries >/tmp/api-code-mode-countries-describe.json
 node src/cli.mjs countries call query:countries --select code --select name >/tmp/api-code-mode-countries-call.json
+node src/cli.mjs smoke-read-post ops balance >/tmp/api-code-mode-read-post-ops.json
+node src/cli.mjs smoke-read-post describe the-plaid-api:accountsBalanceGet >/tmp/api-code-mode-read-post-describe.json
+node src/cli.mjs smoke-read-post describe the-plaid-api:itemRemove >/tmp/api-code-mode-read-post-write-describe.json
+SMOKE_PLAID_CLIENT_ID=client SMOKE_PLAID_SECRET=secret SMOKE_PLAID_VERSION=2020-09-14 node src/cli.mjs smoke-read-post call the-plaid-api:accountsBalanceGet --dry-run >/tmp/api-code-mode-read-post-dry-run.json
 WEATHERBIT_API_KEY=test-key node src/cli.mjs weatherbit call 'weatherbit-interactive-swagger-ui-documentation:GET /alerts?lat={lat}&lon={lon}' --param lat=1 --param lon=1 --dry-run >/tmp/api-code-mode-weatherbit-call-dry-run.json
 node src/cli.mjs weatherbit call 'weatherbit-interactive-swagger-ui-documentation:GET /alerts?lat={lat}&lon={lon}' --param lat=1 --param lon=1 --param key=manual-secret --dry-run >/tmp/api-code-mode-weatherbit-call-explicit-key.json
 TWILIO_ACCOUNT_SID=AC123 TWILIO_AUTH_TOKEN=secret node src/cli.mjs twilio call twilio-api:ListAccount --dry-run >/tmp/api-code-mode-twilio-call-dry-run.json
 if node src/cli.mjs github call github-v3-rest-api:activity/mark-notifications-as-read >/tmp/api-code-mode-github-call-write.json 2>/tmp/api-code-mode-github-call-write.err; then
   echo "expected write call to fail" >&2
+  exit 1
+fi
+if SMOKE_PLAID_CLIENT_ID=client SMOKE_PLAID_SECRET=secret SMOKE_PLAID_VERSION=2020-09-14 node src/cli.mjs smoke-read-post call the-plaid-api:accountsBalanceGet >/tmp/api-code-mode-read-post-call.json 2>/tmp/api-code-mode-read-post-call.err; then
+  echo "expected read POST call without dry-run to fail" >&2
+  exit 1
+fi
+if SMOKE_PLAID_CLIENT_ID=client SMOKE_PLAID_VERSION=2020-09-14 node src/cli.mjs smoke-read-post call the-plaid-api:accountsBalanceGet --dry-run >/tmp/api-code-mode-read-post-missing-env.json 2>/tmp/api-code-mode-read-post-missing-env.err; then
+  echo "expected read POST dry-run without secret env to fail" >&2
   exit 1
 fi
 if node src/cli.mjs weatherbit call 'weatherbit-interactive-swagger-ui-documentation:GET /alerts?lat={lat}&lon={lon}' --param lat=1 --param lon=1 --dry-run >/tmp/api-code-mode-weatherbit-call-missing-key.json 2>/tmp/api-code-mode-weatherbit-call-missing-key.err; then
@@ -80,10 +112,16 @@ const githubCallRoot = JSON.parse(fs.readFileSync("/tmp/api-code-mode-github-cal
 const countriesOps = JSON.parse(fs.readFileSync("/tmp/api-code-mode-countries-ops.json", "utf8"));
 const countriesDescribe = JSON.parse(fs.readFileSync("/tmp/api-code-mode-countries-describe.json", "utf8"));
 const countriesCall = JSON.parse(fs.readFileSync("/tmp/api-code-mode-countries-call.json", "utf8"));
+const readPostOps = JSON.parse(fs.readFileSync("/tmp/api-code-mode-read-post-ops.json", "utf8"));
+const readPostDescribe = JSON.parse(fs.readFileSync("/tmp/api-code-mode-read-post-describe.json", "utf8"));
+const readPostWriteDescribe = JSON.parse(fs.readFileSync("/tmp/api-code-mode-read-post-write-describe.json", "utf8"));
+const readPostDryRun = JSON.parse(fs.readFileSync("/tmp/api-code-mode-read-post-dry-run.json", "utf8"));
 const weatherbitCallDryRun = JSON.parse(fs.readFileSync("/tmp/api-code-mode-weatherbit-call-dry-run.json", "utf8"));
 const weatherbitCallExplicitKey = JSON.parse(fs.readFileSync("/tmp/api-code-mode-weatherbit-call-explicit-key.json", "utf8"));
 const twilioCallDryRun = JSON.parse(fs.readFileSync("/tmp/api-code-mode-twilio-call-dry-run.json", "utf8"));
 const githubCallWriteError = JSON.parse(fs.readFileSync("/tmp/api-code-mode-github-call-write.err", "utf8"));
+const readPostCallError = JSON.parse(fs.readFileSync("/tmp/api-code-mode-read-post-call.err", "utf8"));
+const readPostMissingEnvError = JSON.parse(fs.readFileSync("/tmp/api-code-mode-read-post-missing-env.err", "utf8"));
 const weatherbitMissingKeyError = JSON.parse(fs.readFileSync("/tmp/api-code-mode-weatherbit-call-missing-key.err", "utf8"));
 const linearMissingKeyError = JSON.parse(fs.readFileSync("/tmp/api-code-mode-linear-call-missing-key.err", "utf8"));
 
@@ -113,6 +151,23 @@ if (countriesDescribe.safety !== "read" || !countriesDescribe.return_type) {
 if (countriesCall.status !== "ok" || !Array.isArray(countriesCall.response.json?.data?.countries)) {
   throw new Error("expected Countries GraphQL call to return countries data");
 }
+if (!readPostOps.some((operation) => operation.qualified_id === "the-plaid-api:accountsBalanceGet" && operation.method === "POST" && operation.safety === "read")) {
+  throw new Error("expected configured POST operation to appear as read-safe");
+}
+if (readPostDescribe.method !== "POST" || readPostDescribe.safety !== "read" || !readPostDescribe.requestBody) {
+  throw new Error("expected read POST describe to include read safety and request body metadata");
+}
+if (readPostWriteDescribe.method !== "POST" || readPostWriteDescribe.safety === "read") {
+  throw new Error("expected unlisted POST operation to remain non-read");
+}
+if (readPostDryRun.status !== "dry_run" || readPostDryRun.request.method !== "POST" || readPostDryRun.request.needs_body !== true) {
+  throw new Error("expected read POST dry-run to produce a POST request plan with body metadata");
+}
+for (const header of ["PLAID-CLIENT-ID", "PLAID-SECRET", "Plaid-Version"]) {
+  if (!readPostDryRun.request.headers.includes(header)) {
+    throw new Error(`expected read POST dry-run to inject ${header}`);
+  }
+}
 if (!weatherbitCallDryRun.request.url.includes("key=%5Bredacted%5D") || weatherbitCallDryRun.request.url.includes("test-key")) {
   throw new Error("expected Weatherbit API key to be injected and redacted");
 }
@@ -128,14 +183,20 @@ if (JSON.stringify(twilioCallDryRun).includes("secret")) {
 if (githubCallWriteError.code !== "write_call_blocked") {
   throw new Error("expected write call to fail before network request");
 }
+if (readPostCallError.code !== "write_call_blocked") {
+  throw new Error("expected read POST execution to fail before network request");
+}
+if (readPostMissingEnvError.code !== "missing_env" || !readPostMissingEnvError.missing_env.includes("SMOKE_PLAID_SECRET")) {
+  throw new Error("expected read POST dry-run to fail before request without header_env secret");
+}
 if (weatherbitMissingKeyError.code !== "missing_env" || !weatherbitMissingKeyError.missing_env.includes("WEATHERBIT_API_KEY")) {
   throw new Error("expected Weatherbit call to fail before request without API key");
 }
 if (linearMissingKeyError.code !== "missing_env" || !linearMissingKeyError.missing_env.includes("LINEAR_API_KEY")) {
   throw new Error("expected Linear GraphQL call to fail before request without API key");
 }
-if (validate.filter((result) => result.status === "ok").length !== 16) {
-  throw new Error("expected 16 package profiles to validate");
+if (validate.filter((result) => result.status === "ok").length !== 17) {
+  throw new Error("expected 17 package profiles to validate");
 }
 if (gaps.length !== 0) {
   throw new Error("expected no known validation gaps");

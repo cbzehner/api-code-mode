@@ -24,7 +24,20 @@
     { "id": "digitalocean", "name": "DigitalOcean", "apis_guru": "digitalocean.com", "auth": { "type": "bearer", "env": "MATRIX_DIGITALOCEAN_TOKEN" } },
     { "id": "box", "name": "Box", "apis_guru": "box.com" },
     { "id": "zoom", "name": "Zoom", "apis_guru": "zoom.us", "auth": { "type": "bearer", "env": "MATRIX_ZOOM_TOKEN" } },
-    { "id": "plaid", "name": "Plaid", "apis_guru": "plaid.com" },
+    {
+      "id": "plaid",
+      "name": "Plaid",
+      "apis_guru": "plaid.com",
+      "auth": {
+        "type": "api_key",
+        "header_env": {
+          "PLAID-CLIENT-ID": "MATRIX_PLAID_CLIENT_ID",
+          "PLAID-SECRET": "MATRIX_PLAID_SECRET",
+          "Plaid-Version": "MATRIX_PLAID_VERSION"
+        }
+      },
+      "policy": { "read_operations": ["accountsBalanceGet"] }
+    },
     { "id": "figshare", "name": "Figshare", "apis_guru": "figshare.com", "auth": { "type": "oauth2", "env": "MATRIX_FIGSHARE_ACCESS_TOKEN" } },
     { "id": "microsoft-computer-vision", "name": "Microsoft Computer Vision", "apis_guru": "microsoft.com:cognitiveservices-ComputerVision", "auth": { "type": "api_key", "env": "MATRIX_AZURE_COGNITIVE_SERVICES_KEY" } },
     { "id": "azure-api-management", "name": "Azure API Management", "apis_guru": "azure.com:apimanagement-apimapis" },

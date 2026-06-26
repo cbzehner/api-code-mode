@@ -19,8 +19,11 @@ api-code-mode <package> describe <operation-id>
 api-code-mode <package> call <operation-id> [--param name=value]
 ```
 
-`call` is limited to read-only GET operations in the spike runtime. Write and
-destructive operations must fail before any network request is made.
+`call` is limited to read-only GET execution in the spike runtime. Profiles may
+mark specific non-GET operations as read-only for operation search, description,
+and dry-run request planning, but non-GET HTTP calls must still fail before any
+network request is made. Write and destructive operations must fail before any
+network request is made.
 
 Private diagnostic commands remain stable for agents and maintainers, but they
 must not appear in public help:
@@ -103,6 +106,9 @@ auth:
   type: bearer | api_key | basic | oauth2 | token_exchange | unknown
   env: PROVIDER_TOKEN
   header: Authorization
+  header_env:
+    X-First-Key: PROVIDER_FIRST_KEY
+    X-Second-Key: PROVIDER_SECOND_KEY
   scheme: Bearer
   query_param: key
   username_env: PROVIDER_USERNAME
@@ -116,6 +122,24 @@ auth:
   default_scopes:
     - resource:read
 ```
+
+`header_env` supports APIs that require multiple API-key-like headers. Values are
+environment variable names only.
+
+Supported policy fields:
+
+```yaml
+policy:
+  default_write: confirm
+  read_operations:
+    - accountsBalanceGet
+```
+
+`read_operations` is for APIs that use non-GET transports for specific read
+operations. It accepts operation IDs or qualified operation IDs and makes only
+those operations appear as `safety: read` in `ops`, `describe`, and `plan-call`.
+The spike runtime still executes only GET requests; non-GET read operations are
+limited to `--dry-run` planning until the execution contract changes.
 
 `plan-auth <package>` returns a structured auth plan. It combines profile auth
 facts, OpenAPI security schemes, and auth-looking operation parameters. Operation

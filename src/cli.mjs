@@ -143,6 +143,16 @@ const readProfile = async (packageId) => {
     }
     return match[1].split("\n").map((line) => line.trim().replace(/^- /, "")).filter(Boolean);
   };
+  const sectionMapValues = (section, key) => {
+    const match = text.match(new RegExp(`^${section}:\\n(?:  .+\\n)*?  ${key}:\\n((?:    [^\\n:]+:\\s*.+\\n?)+)`, "m"));
+    if (!match) {
+      return {};
+    }
+    return Object.fromEntries(match[1].split("\n").map((line) => {
+      const separator = line.indexOf(":");
+      return [line.slice(0, separator).trim(), line.slice(separator + 1).trim()];
+    }).filter(([name, value]) => name && value));
+  };
 
   return {
     id: packageId,
@@ -159,6 +169,7 @@ const readProfile = async (packageId) => {
       type: sectionScalar("auth", "type") ?? "unknown",
       env: sectionScalar("auth", "env"),
       header: sectionScalar("auth", "header"),
+      headerEnv: sectionMapValues("auth", "header_env"),
       scheme: sectionScalar("auth", "scheme"),
       queryParam: sectionScalar("auth", "query_param"),
       usernameEnv: sectionScalar("auth", "username_env"),
@@ -170,6 +181,10 @@ const readProfile = async (packageId) => {
       tokenResponseField: sectionScalar("auth", "token_response_field"),
       defaultExpirySeconds: sectionScalar("auth", "default_expiry_seconds"),
       defaultScopes: sectionListValues("auth", "default_scopes"),
+    },
+    policy: {
+      defaultWrite: sectionScalar("policy", "default_write") ?? "confirm",
+      readOperations: sectionListValues("policy", "read_operations"),
     },
     text,
   };
@@ -954,6 +969,17 @@ const applyDiscoveryCandidate = async (packageId) => {
   };
 };
 
+const operationSafety = (operation, qualifiedId, policy = {}) => {
+  if (operation.method === "DELETE") {
+    return "destructive";
+  }
+  if (operation.method === "GET") {
+    return "read";
+  }
+  const readOperations = new Set(policy.readOperations ?? []);
+  return readOperations.has(operation.id) || readOperations.has(qualifiedId) ? "read" : "write";
+};
+
 const operations = (spec) =>
   Object.entries(spec.paths ?? {}).flatMap(([path, methods]) =>
     Object.entries(methods)
@@ -969,15 +995,20 @@ const operations = (spec) =>
 
 const specSlug = (spec, index) => (spec.info?.title ?? `spec-${index + 1}`).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 
-const packageOperations = (specs) =>
+const packageOperations = (specs, policy) =>
   specs.flatMap(({ source, spec }, index) =>
-    operations(spec).map((operation) => ({
-      ...operation,
-      spec: specSlug(spec, index),
-      spec_title: spec.info?.title,
-      source,
-      qualified_id: `${specSlug(spec, index)}:${operation.id}`,
-    })),
+    operations(spec).map((operation) => {
+      const specId = specSlug(spec, index);
+      const qualifiedId = `${specId}:${operation.id}`;
+      return {
+        ...operation,
+        safety: operationSafety(operation, qualifiedId, policy),
+        spec: specId,
+        spec_title: spec.info?.title,
+        source,
+        qualified_id: qualifiedId,
+      };
+    }),
   );
 
 const searchOperations = (listedOperations, query) => {
@@ -997,15 +1028,13 @@ const searchOperations = (listedOperations, query) => {
     .slice(0, 25);
 };
 
-const findOperation = (specs, id) => {
-  const listedOperations = packageOperations(specs);
+const findOperation = (specs, id, policy) => {
+  const listedOperations = packageOperations(specs, policy);
   return listedOperations.find((operation) => operation.qualified_id === id) ?? listedOperations.find((operation) => operation.id === id);
 };
 
-const operationSafety = (method) => method === "GET" ? "read" : method === "DELETE" ? "destructive" : "write";
-
-const describeOperation = (specs, id) => {
-  const match = findOperation(specs, id);
+const describeOperation = (specs, id, policy) => {
+  const match = findOperation(specs, id, policy);
   if (!match) {
     throw new Error(`Operation not found: ${id}`);
   }
@@ -1015,7 +1044,6 @@ const describeOperation = (specs, id) => {
   return {
     ...match,
     description: operation.description,
-    safety: operationSafety(match.method),
     parameters: (operation.parameters ?? []).map((parameter) => resolveRef(spec, parameter)).filter(Boolean),
     requestBody: resolveRef(spec, operation.requestBody),
     security: operation.security ?? spec.security ?? [],
@@ -1023,7 +1051,8 @@ const describeOperation = (specs, id) => {
 };
 
 const describePackageOperation = async (packageId, id) => {
-  const detail = describeOperation(await fetchPackageSpecs(packageId), id);
+  const profile = await readProfile(packageId);
+  const detail = describeOperation(await fetchSpecs(profile), id, profile.policy);
   const auth = await authPlan(packageId);
   return {
     ...detail,
@@ -1172,6 +1201,19 @@ const profileAuthInjection = (auth) => {
   return null;
 };
 
+const profileAuthInjections = (auth) => {
+  const headerInjections = Object.entries(auth.headerEnv ?? {}).map(([header, env]) => ({
+    in: "header",
+    name: header,
+    value_template: `\${${env}}`,
+  }));
+  if (headerInjections.length > 0) {
+    return headerInjections;
+  }
+  const injection = profileAuthInjection(auth);
+  return injection ? [injection] : [];
+};
+
 const authParameterValueTemplate = (auth, parameter) => {
   const name = parameter.name.toLowerCase();
   if (name === "authorization" && auth.type === "basic") {
@@ -1225,14 +1267,15 @@ const authPlan = async (packageId) => {
   const schemes = specs.flatMap(({ spec, source }) => securitySchemes(spec).map((scheme) => ({ ...scheme, source })));
   const parameters = authLikeParameters(specs, profile.auth);
   const schemeInjection = schemes.map((scheme) => authInjectionFromScheme(scheme, profile.auth)).find(Boolean);
-  const defaultInjection = profileAuthInjection(profile.auth) ?? schemeInjection;
-  const tokenOperation = profile.auth.tokenOperation ? requestPlan(specs, profile.auth.tokenOperation) : null;
+  const profileInjections = profileAuthInjections(profile.auth);
+  const defaultInjection = profileInjections[0] ?? schemeInjection;
+  const tokenOperation = profile.auth.tokenOperation ? requestPlan(specs, profile.auth.tokenOperation, profile.policy) : null;
   const gaps = [
     profile.auth.type === "unknown" && schemes.length > 0 ? "Profile auth type is unknown; detected machine-readable auth schemes." : null,
     profile.auth.type === "unknown" && parameters.length > 0 ? "Auth-like operation parameters were detected; profile needs auth details." : null,
-    profile.auth.type !== "unknown" && !defaultInjection && profile.auth.type !== "token_exchange" ? "Profile auth type is set but runtime injection is incomplete." : null,
+    profile.auth.type !== "unknown" && profileInjections.length === 0 && !schemeInjection && profile.auth.type !== "token_exchange" ? "Profile auth type is set but runtime injection is incomplete." : null,
     profile.auth.type === "basic" && (!profile.auth.usernameEnv || !profile.auth.passwordEnv) ? "Basic auth needs username_env and password_env in the profile." : null,
-    profile.auth.type === "api_key" && !profile.auth.env ? "API key auth needs env in the profile." : null,
+    profile.auth.type === "api_key" && !profile.auth.env && Object.keys(profile.auth.headerEnv ?? {}).length === 0 ? "API key auth needs env or header_env in the profile." : null,
     profile.auth.type === "bearer" && !profile.auth.env ? "Bearer auth needs env in the profile." : null,
     profile.auth.type === "oauth2" && !profile.auth.env ? "OAuth2 auth needs env in the profile for an already-issued access token." : null,
     profile.auth.type === "token_exchange" && !profile.auth.tokenOperation ? "Token exchange auth needs token_operation in the profile." : null,
@@ -1250,6 +1293,7 @@ const authPlan = async (packageId) => {
     runtime: {
       mode: profile.auth.type === "unknown" && schemeInjection ? "detected_from_spec" : profile.auth.type,
       default_injection: profile.auth.type === "token_exchange" ? null : defaultInjection,
+      default_injections: profile.auth.type === "token_exchange" ? [] : profileInjections,
       parameter_injections: tokenParameterInjections(profile.auth, parameters),
       token_exchange: profile.auth.type === "token_exchange" ? {
         operation: profile.auth.tokenOperation,
@@ -1290,9 +1334,9 @@ const serverUrl = (spec, overrideUrl) => {
 
 const joinUrlTemplate = (baseUrl, path) => `${baseUrl.replace(/\/+$/, "")}/${path.replace(/^\/+/, "")}`;
 
-const requestPlan = (spec, id) => {
+const requestPlan = (spec, id, policy) => {
   const specs = Array.isArray(spec) ? spec : [{ source: "inline", spec }];
-  const operation = describeOperation(specs, id);
+  const operation = describeOperation(specs, id, policy);
   const selectedEntry = specs.find((entry) => entry.source === operation.source);
   const selectedSpec = selectedEntry.spec;
   const parameters = operation.parameters ?? [];
@@ -1308,7 +1352,7 @@ const requestPlan = (spec, id) => {
     spec_title: operation.spec_title,
     method: operation.method,
     url_template: joinUrlTemplate(serverUrl(selectedSpec, selectedEntry.serverUrl), operation.path),
-    safety: operationSafety(operation.method),
+    safety: operation.safety,
     path_parameters: pathParameters.map((parameter) => ({
       name: parameter.name,
       required: parameter.required === true,
@@ -1364,8 +1408,10 @@ const operationAuthInjections = async (packageId, plan) => {
   ]);
   const parameterInjections = (auth.runtime?.parameter_injections ?? [])
     .filter((injection) => operationParameterKeys.has(authInjectionKey(injection)));
-  const defaultInjection = auth.runtime?.default_injection;
-  const needsDefaultInjection = defaultInjection && operationSecurityRequired(plan.security);
+  const defaultInjections = auth.runtime?.default_injections?.length > 0
+    ? auth.runtime.default_injections
+    : auth.runtime?.default_injection ? [auth.runtime.default_injection] : [];
+  const needsDefaultInjection = defaultInjections.length > 0 && operationSecurityRequired(plan.security);
   const needsAuth = parameterInjections.length > 0 || operationSecurityRequired(plan.security);
   if (auth.status !== "ready" && needsAuth) {
     throw new Error(`Auth is not ready for ${packageId}: ${(auth.gaps ?? []).join("; ")}`);
@@ -1379,8 +1425,8 @@ const operationAuthInjections = async (packageId, plan) => {
 
   return unique([
     ...parameterInjections,
-    needsDefaultInjection ? defaultInjection : null,
-    operationSecurityRequired(plan.security) && !defaultInjection ? tokenExchangeInjection : null,
+    ...(needsDefaultInjection ? defaultInjections : []),
+    operationSecurityRequired(plan.security) && defaultInjections.length === 0 ? tokenExchangeInjection : null,
   ]);
 };
 
@@ -1419,9 +1465,13 @@ const redactedUrl = (url, secretQueryNames) => {
 const callOperation = async (packageId, id, args) => {
   const parameters = parseParamValues(args);
   const dryRun = args.includes("--dry-run");
-  const plan = requestPlan(await fetchPackageSpecs(packageId), id);
+  const profile = await readProfile(packageId);
+  const plan = requestPlan(await fetchSpecs(profile), id, profile.policy);
   if (plan.safety !== "read") {
     throw new Error("Only read-only GET operations can be called by the spike runtime.");
+  }
+  if (!dryRun && plan.method !== "GET") {
+    throw new Error("Only read-only GET operations can be executed by the spike runtime; non-GET read operations support dry-run planning only.");
   }
 
   const authInjections = await operationAuthInjections(packageId, plan);
@@ -1460,6 +1510,7 @@ const callOperation = async (packageId, id, args) => {
     url: redactedUrl(url, secretQueryNames),
     headers: Object.keys(headers).sort(),
     safety: plan.safety,
+    needs_body: plan.needs_body,
   };
   if (dryRun) {
     return { package: packageId, operation: plan.qualified_id, status: "dry_run", request };
@@ -1598,7 +1649,7 @@ const validateProfile = async (packageId) => {
 
   try {
     const specs = await fetchPackageSpecs(packageId);
-    const listedOperations = packageOperations(specs);
+    const listedOperations = packageOperations(specs, profile.policy);
     const methods = [...new Set(listedOperations.map((operation) => operation.method))].sort();
     return {
       package: packageId,
@@ -1871,13 +1922,13 @@ const packageCommand = async (packageId, subcommand, args) => {
     return validateProfile(packageId);
   }
   if (!subcommand || subcommand === "ops") {
-    return searchOperations(packageOperations(await fetchPackageSpecs(packageId)), args.join(" "));
+    return searchOperations(packageOperations(await fetchSpecs(profile), profile.policy), args.join(" "));
   }
   if (subcommand === "describe") {
     return describePackageOperation(packageId, args.join(" "));
   }
   if (subcommand === "plan-call") {
-    return requestPlan(await fetchPackageSpecs(packageId), args.join(" "));
+    return requestPlan(await fetchSpecs(profile), args.join(" "), profile.policy);
   }
   if (subcommand === "call") {
     return callOperation(packageId, args[0], args.slice(1));
@@ -1920,13 +1971,15 @@ const main = async () => {
     return searchApis(packageIdOrQuery);
   }
   if (command === "ops") {
-    return searchOperations(packageOperations(await fetchPackageSpecs(packageIdOrQuery)), restArgs.join(" "));
+    const profile = await readProfile(packageIdOrQuery);
+    return searchOperations(packageOperations(await fetchSpecs(profile), profile.policy), restArgs.join(" "));
   }
   if (command === "describe") {
     return describePackageOperation(packageIdOrQuery, restArgs.join(" "));
   }
   if (command === "plan-call") {
-    return requestPlan(await fetchPackageSpecs(packageIdOrQuery), restArgs.join(" "));
+    const profile = await readProfile(packageIdOrQuery);
+    return requestPlan(await fetchSpecs(profile), restArgs.join(" "), profile.policy);
   }
   if (command === "plan-auth") {
     return authPlan(packageIdOrQuery);

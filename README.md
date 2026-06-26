@@ -40,10 +40,13 @@ node src/cli.mjs cable describe api-reference:request-token
 node src/cli.mjs github call github-v3-rest-api:meta/root
 ```
 
-`call` currently executes only read-only GET operations. Write and destructive
-operations fail before making a network request. When a read call needs auth,
-the runner injects credentials from the package profile's env vars and fails
-before the request if a required env var is missing.
+`call` currently executes only read-only GET operations. Profiles can mark
+specific non-GET operations as read-only for search, describe, and dry-run
+request planning, but non-GET HTTP execution still fails before making a network
+request. Write and destructive operations fail before making a network request.
+When a read call needs auth, the runner injects credentials from the package
+profile's env vars and fails before the request if a required env var is
+missing.
 
 Successful commands print JSON to stdout. Failed commands print JSON to stderr
 with a stable `code` such as `missing_env`, `missing_parameters`, or
@@ -104,8 +107,9 @@ produce header/query/basic/OAuth injection templates. Weird cases stay
 declarative: Slack exposes required `token` operation parameters, and Cable
 uses a token-exchange operation before access-token calls.
 The read-only call runner consumes this plan for bearer headers, API-key query
-params, basic auth headers, and required auth-like operation parameters. Request
-metadata redacts injected query-string secrets.
+params, single or multiple API-key headers, basic auth headers, and required
+auth-like operation parameters. Request metadata redacts injected query-string
+secrets.
 
 ## Validation Set
 

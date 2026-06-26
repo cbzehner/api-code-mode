@@ -22,12 +22,18 @@ const profileText = (target) => [
   `  type: ${target.auth?.type ?? "unknown"}`,
   target.auth?.env ? `  env: ${target.auth.env}` : null,
   target.auth?.header ? `  header: ${target.auth.header}` : null,
+  target.auth?.header_env ? "  header_env:" : null,
+  ...Object.entries(target.auth?.header_env ?? {}).map(([header, env]) => `    ${header}: ${env}`),
   target.auth?.scheme ? `  scheme: ${target.auth.scheme}` : null,
   target.auth?.query_param ? `  query_param: ${target.auth.query_param}` : null,
   target.auth?.username_env ? `  username_env: ${target.auth.username_env}` : null,
   target.auth?.password_env ? `  password_env: ${target.auth.password_env}` : null,
   "policy:",
   "  default_write: confirm",
+  ...(target.policy?.read_operations?.length > 0 ? [
+    "  read_operations:",
+    ...target.policy.read_operations.map((operation) => `    - ${operation}`),
+  ] : []),
   "output:",
   "  default_format: json",
   "",
@@ -37,6 +43,7 @@ const authEnv = (target) => Object.fromEntries([
   target.auth?.env ? [target.auth.env, "matrix-secret"] : null,
   target.auth?.username_env ? [target.auth.username_env, "matrix-user"] : null,
   target.auth?.password_env ? [target.auth.password_env, "matrix-secret"] : null,
+  ...Object.values(target.auth?.header_env ?? {}).map((env) => [env, "matrix-secret"]),
 ].filter(Boolean));
 
 const parseJson = (text) => {
@@ -97,7 +104,7 @@ const cleanupProfiles = async () => {
 };
 
 const firstReadOperation = (operations) =>
-  operations.find((operation) => operation.method === "GET" || operation.method === "QUERY" || operation.method === "query");
+  operations.find((operation) => operation.safety === "read" || operation.method === "GET" || operation.method === "QUERY" || operation.method === "query");
 
 const requiredParameters = (description) =>
   [
