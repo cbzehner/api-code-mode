@@ -1,0 +1,14 @@
+{
+  "targets": [
+    { "id": "sendgrid", "input": "sendgrid.com" },
+    { "id": "trello", "input": "trello.com" },
+    { "id": "digitalocean", "input": "digitalocean.com" },
+    { "id": "spotify", "input": "spotify.com" },
+    { "id": "vercel", "input": "vercel.com" },
+    { "id": "box", "input": "box.com" },
+    { "id": "figshare", "input": "figshare.com" },
+    { "id": "tomtom", "input": "tomtom.com" },
+    { "id": "trevorblades", "input": "https://countries.trevorblades.com/graphql", "expect_source": "graphql_url" },
+    { "id": "cable", "input": "https://docs.cable.tech/", "expect_source": "openapi_urls", "keep_existing": true }
+  ]
+}

@@ -127,10 +127,14 @@ The first `pkgs/` set intentionally mixes API styles:
 For broader coverage, run:
 
 ```bash
+npm run generate-matrix
 npm run matrix
 ```
 
-The matrix creates temporary `pkgs/matrix-*` profiles from
+`generate-matrix` starts from public domains/URLs, runs the public `generate`
+flow, checks the generated package with `ops` and `describe`, and removes
+temporary packages it created. The configured matrix creates temporary
+`pkgs/matrix-*` profiles from
 `test-fixtures/api-matrix.json`, exercises validate/ops/describe/read-only
 dry-run through the normal CLI, reports edge cases as JSON, and removes the
 temporary profiles. The current fixture covers 41 APIs across OpenAPI,
